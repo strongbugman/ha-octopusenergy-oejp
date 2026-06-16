@@ -1,0 +1,10 @@
+.env
+.env.*
+!.env.example
+.local/
+oejp_raw_payloads*.json
+__pycache__/
+.pytest_cache/
+*.pyc
+.venv/
+.DS_Store

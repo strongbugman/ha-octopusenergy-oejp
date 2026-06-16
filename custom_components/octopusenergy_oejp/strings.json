@@ -1,0 +1,16 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Octopus Energy OEJP",
+        "description": "Enter OEJP Kraken credentials for the prototype integration.",
+        "data": {
+          "email": "Email",
+          "password": "Password",
+          "base_url": "Base URL",
+          "auth_path": "Auth path"
+        }
+      }
+    }
+  }
+}
