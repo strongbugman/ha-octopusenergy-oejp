@@ -4,7 +4,7 @@
   "after_dependencies": [],
   "codeowners": [],
   "config_flow": true,
-  "documentation": "https://developer.oejp-kraken.energy/guides/rest/",
+  "documentation": "https://github.com/strongbugman/ha-octopusenergy-oejp-demo",
   "iot_class": "cloud_polling",
   "requirements": [],
   "version": "0.1.0"

@@ -1,25 +1,24 @@
-"""Data coordinator skeleton for Octopus Energy OEJP."""
+"""Data coordinator for Octopus Energy OEJP."""
 
 from __future__ import annotations
 
 import logging
 from datetime import timedelta
-from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
-from octopusenergy_oejp_demo import OctopusOejpClient, async_discover_account_electricity_data
-
-from .const import CONF_AUTH_PATH, CONF_BASE_URL, CONF_EMAIL, CONF_PASSWORD, DOMAIN
+from .api import GraphQLClient, GraphQLError
+from .const import CONF_BASE_URL, CONF_EMAIL, CONF_PASSWORD, DEFAULT_BASE_URL, DOMAIN
+from .models import EnergySnapshot, parse_energy_snapshot
 
 SCAN_INTERVAL = timedelta(minutes=15)
 _LOGGER = logging.getLogger(__name__)
 
 
-class OctopusOejpDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
-    """Fetch a redacted discovery summary for prototype sensors."""
+class OctopusOejpDataUpdateCoordinator(DataUpdateCoordinator[EnergySnapshot]):
+    """Fetch and parse the OEJP energy snapshot every 15 minutes."""
 
     def __init__(self, hass: HomeAssistant, entry: ConfigEntry) -> None:
         super().__init__(
@@ -30,21 +29,18 @@ class OctopusOejpDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         )
         self.entry = entry
         data = entry.data
-        auth_path = data.get(CONF_AUTH_PATH)
-        self.client = OctopusOejpClient(
-            email=data[CONF_EMAIL],
-            password=data[CONF_PASSWORD],
-            base_url=data.get(CONF_BASE_URL, "https://api.oejp-kraken.energy"),
-            auth_paths=(auth_path,) if auth_path else None,
-        )
+        base = data.get(CONF_BASE_URL, DEFAULT_BASE_URL).rstrip("/")
+        graphql_url = base + "/v1/graphql/"
+        self._client = GraphQLClient(url=graphql_url)
+        self._email: str = data[CONF_EMAIL]
+        self._password: str = data[CONF_PASSWORD]
 
-    async def _async_update_data(self) -> dict[str, Any]:
+    def _fetch(self) -> dict:
+        return self._client.fetch_snapshot(email=self._email, password=self._password)
+
+    async def _async_update_data(self) -> EnergySnapshot:
         try:
-            report = await async_discover_account_electricity_data(
-                self.client,
-                max_pages=3,
-                max_derived_requests=25,
-            )
-        except Exception as exc:  # noqa: BLE001
+            raw = await self.hass.async_add_executor_job(self._fetch)
+            return parse_energy_snapshot(raw)
+        except GraphQLError as exc:
             raise UpdateFailed(str(exc)) from exc
-        return report.summary()

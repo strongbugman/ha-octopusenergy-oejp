@@ -1,4 +1,4 @@
-"""Home Assistant skeleton for the Octopus Energy OEJP integration."""
+"""Home Assistant integration for Octopus Energy OEJP."""
 
 from __future__ import annotations
 

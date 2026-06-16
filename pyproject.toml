@@ -3,24 +3,21 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "ha-octopusenergy-oejp-demo"
+name = "ha-octopusenergy-oejp"
 version = "0.1.0"
-description = "Demo Home Assistant custom integration prototype for the Octopus Energy Japan/Korea OEJP Kraken REST API."
+description = "Home Assistant custom integration for the Octopus Energy Japan/Korea OEJP Kraken API."
 readme = "README.md"
 requires-python = ">=3.11"
-authors = [{ name = "Prototype" }]
+authors = [{ name = "strongbugman" }]
 license = "MIT"
 dependencies = []
 
 [project.optional-dependencies]
 test = ["pytest>=8"]
 
-[project.scripts]
-oejp-demo = "octopusenergy_oejp_demo.cli:main"
-
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["octopusenergy_oejp_demo*"]
+include = ["custom_components*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
