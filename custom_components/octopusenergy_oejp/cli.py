@@ -12,29 +12,38 @@ Credentials (any of these work):
 from __future__ import annotations
 
 import argparse
+import asyncio
 import hashlib
 import json
 import os
 import sys
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
 from .api import GraphQLClient, GraphQLError
 from .models import (
+    ACCESS_AUTHORIZED,
+    AGGREGATE_PERIOD_THIS_MONTH,
+    AGGREGATE_PERIOD_THIS_WEEK,
+    AGGREGATE_PERIOD_TODAY,
     AccessStatus,
     ElectricitySupplyPoint,
     EnergySnapshot,
     access_status_from_graphql_error,
+    aggregate_supply_point_half_hourly_readings,
     apply_half_hourly_readings,
     apply_interval_readings,
+    current_half_hourly_fetch_window,
     parse_energy_snapshot,
 )
 
 _DEFAULT_BASE_URL = "https://api.oejp-kraken.energy"
-_RECENT_WINDOW = timedelta(days=7)
-_JST = timezone(timedelta(hours=9))
+_KWH = "kWh"
+_JPY = "JPY"
+_DEVICE_CLASS_ENERGY = "energy"
+_DEVICE_CLASS_MONETARY = "monetary"
+_STATE_CLASS_TOTAL = "total"
 
 
 # ---------------------------------------------------------------------------
@@ -82,55 +91,53 @@ def load_credentials(dotenv_path: str | None = None) -> dict[str, str]:
 
 
 # ---------------------------------------------------------------------------
-# Snapshot fetching (mirrors coordinator logic, sync, no HA dependency)
+# Snapshot fetching (mirrors coordinator logic, async, no HA dependency)
 # ---------------------------------------------------------------------------
 
-def fetch_snapshot(email: str, password: str, base_url: str = _DEFAULT_BASE_URL) -> EnergySnapshot:
+async def fetch_snapshot(email: str, password: str, base_url: str = _DEFAULT_BASE_URL) -> EnergySnapshot:
     """Login and fetch the full energy snapshot with readings."""
     graphql_url = base_url.rstrip("/") + "/v1/graphql/"
-    client = GraphQLClient(url=graphql_url)
+    async with GraphQLClient(url=graphql_url) as client:
+        access_token = (await client.obtain_token(email=email, password=password)).access_token
 
-    access_token = client.obtain_token(email=email, password=password).access_token
+        raw = await client.viewer_energy_snapshot(token=access_token)
+        snapshot = parse_energy_snapshot(raw)
 
-    raw = client.viewer_energy_snapshot(token=access_token)
-    snapshot = parse_energy_snapshot(raw)
+        from_dt, to_dt = current_half_hourly_fetch_window()
+        for account in snapshot.viewer.accounts:
+            interval_result = await client.account_interval_readings(
+                token=access_token,
+                account_number=account.number,
+            )
+            interval_access = (
+                AccessStatus.authorized("intervalReadings")
+                if interval_result.error is None
+                else access_status_from_graphql_error("intervalReadings", interval_result.error)
+            )
+            apply_interval_readings(
+                snapshot,
+                interval_result.payload,
+                interval_access,
+                account_number=account.number,
+            )
 
-    to_dt = datetime.now(_JST).replace(microsecond=0)
-    from_dt = to_dt - _RECENT_WINDOW
-    for account in snapshot.viewer.accounts:
-        interval_result = client.account_interval_readings(
-            token=access_token,
-            account_number=account.number,
-        )
-        interval_access = (
-            AccessStatus.authorized("intervalReadings")
-            if interval_result.error is None
-            else access_status_from_graphql_error("intervalReadings", interval_result.error)
-        )
-        apply_interval_readings(
-            snapshot,
-            interval_result.payload,
-            interval_access,
-            account_number=account.number,
-        )
-
-        hh_result = client.account_half_hourly_readings(
-            token=access_token,
-            account_number=account.number,
-            from_datetime=from_dt.isoformat(),
-            to_datetime=to_dt.isoformat(),
-        )
-        hh_access = (
-            AccessStatus.authorized("halfHourlyReadings")
-            if hh_result.error is None
-            else access_status_from_graphql_error("halfHourlyReadings", hh_result.error)
-        )
-        apply_half_hourly_readings(
-            snapshot,
-            hh_result.payload,
-            hh_access,
-            account_number=account.number,
-        )
+            hh_result = await client.account_half_hourly_readings(
+                token=access_token,
+                account_number=account.number,
+                from_datetime=from_dt.isoformat(),
+                to_datetime=to_dt.isoformat(),
+            )
+            hh_access = (
+                AccessStatus.authorized("halfHourlyReadings")
+                if hh_result.error is None
+                else access_status_from_graphql_error("halfHourlyReadings", hh_result.error)
+            )
+            apply_half_hourly_readings(
+                snapshot,
+                hh_result.payload,
+                hh_access,
+                account_number=account.number,
+            )
 
     return snapshot
 
@@ -145,6 +152,7 @@ class SensorRecord:
     state: Any
     unit: str | None = None
     device_class: str | None = None
+    state_class: str | None = None
     attributes: dict[str, Any] = field(default_factory=dict)
 
 
@@ -163,7 +171,56 @@ def _access_attrs(status: AccessStatus) -> dict[str, Any]:
     return attrs
 
 
-def _supply_point_records(point: ElectricitySupplyPoint) -> list[SensorRecord]:
+def _aggregate_state(point: ElectricitySupplyPoint, state: Any, reading_count: int) -> Any:
+    if point.half_hourly_readings_access.status != ACCESS_AUTHORIZED and reading_count == 0:
+        return None
+    return state
+
+
+def _aggregate_records(
+    point: ElectricitySupplyPoint,
+    prefix: str,
+    base: dict[str, Any],
+    *,
+    now: Any = None,
+) -> list[SensorRecord]:
+    records: list[SensorRecord] = []
+    specs = (
+        (AGGREGATE_PERIOD_TODAY, "Today"),
+        (AGGREGATE_PERIOD_THIS_WEEK, "This Week"),
+        (AGGREGATE_PERIOD_THIS_MONTH, "This Month"),
+    )
+    for period, label in specs:
+        aggregate = aggregate_supply_point_half_hourly_readings(point, period, now=now)
+        attrs = {**base, **aggregate.as_attributes()}
+        records.extend(
+            [
+                SensorRecord(
+                    f"{prefix} {label} Consumption",
+                    _aggregate_state(point, aggregate.total_consumption, aggregate.reading_count),
+                    unit=_KWH,
+                    device_class=_DEVICE_CLASS_ENERGY,
+                    state_class=_STATE_CLASS_TOTAL,
+                    attributes=attrs,
+                ),
+                SensorRecord(
+                    f"{prefix} {label} Cost",
+                    _aggregate_state(point, aggregate.total_cost, aggregate.reading_count),
+                    unit=_JPY,
+                    device_class=_DEVICE_CLASS_MONETARY,
+                    state_class=_STATE_CLASS_TOTAL,
+                    attributes=attrs,
+                ),
+            ]
+        )
+    return records
+
+
+def _supply_point_records(
+    point: ElectricitySupplyPoint,
+    *,
+    now: Any = None,
+) -> list[SensorRecord]:
     fp = _fingerprint(point.id)
     prefix = f"Supply Point {fp}"
     base = {"meter_count": point.meter_count, "supply_point_fingerprint": fp}
@@ -174,7 +231,7 @@ def _supply_point_records(point: ElectricitySupplyPoint) -> list[SensorRecord]:
     ir = point.latest_interval_reading
     hhr = point.latest_half_hourly_reading
 
-    return [
+    records = [
         rec("Status", point.status),
         rec("Agreements", len(point.agreements)),
         rec("Meter Count", point.meter_count),
@@ -199,9 +256,11 @@ def _supply_point_records(point: ElectricitySupplyPoint) -> list[SensorRecord]:
             attributes={**base, **_access_attrs(point.half_hourly_readings_access)},
         ),
     ]
+    records.extend(_aggregate_records(point, prefix, base, now=now))
+    return records
 
 
-def build_sensor_records(snapshot: EnergySnapshot) -> list[SensorRecord]:
+def build_sensor_records(snapshot: EnergySnapshot, *, now: Any = None) -> list[SensorRecord]:
     """Build all sensor records from a snapshot, mirroring the HA sensor platform."""
     records: list[SensorRecord] = [
         SensorRecord("Account Count", snapshot.account_count),
@@ -227,7 +286,7 @@ def build_sensor_records(snapshot: EnergySnapshot) -> list[SensorRecord]:
         ]
         for prop in account.properties:
             for point in prop.electricity_supply_points:
-                records.extend(_supply_point_records(point))
+                records.extend(_supply_point_records(point, now=now))
 
     return records
 
@@ -244,6 +303,7 @@ def format_json(records: list[SensorRecord]) -> str:
                 "state": r.state,
                 "unit": r.unit,
                 "device_class": r.device_class,
+                "state_class": r.state_class,
                 "attributes": r.attributes,
             }
             for r in records
@@ -255,12 +315,14 @@ def format_json(records: list[SensorRecord]) -> str:
 
 def format_table(records: list[SensorRecord]) -> str:
     """Render sensor records as a Markdown table."""
-    header = "| Name | State | Unit | Attributes |"
-    sep =    "|------|-------|------|------------|"
+    header = "| Name | State | Unit | Device Class | State Class | Attributes |"
+    sep =    "|------|-------|------|--------------|-------------|------------|"
     lines = [header, sep]
     for r in records:
         state = "" if r.state is None else str(r.state)
         unit = r.unit or ""
+        device_class = r.device_class or ""
+        state_class = r.state_class or ""
         # Skip fingerprint-only attrs to reduce noise; keep semantic ones
         shown = {
             k: v for k, v in r.attributes.items()
@@ -269,7 +331,9 @@ def format_table(records: list[SensorRecord]) -> str:
         attrs = "; ".join(f"{k}={v}" for k, v in shown.items())
         if len(attrs) > 100:
             attrs = attrs[:97] + "..."
-        lines.append(f"| {r.name} | {state} | {unit} | {attrs} |")
+        lines.append(
+            f"| {r.name} | {state} | {unit} | {device_class} | {state_class} | {attrs} |"
+        )
     return "\n".join(lines)
 
 
@@ -305,11 +369,11 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     try:
-        snapshot = fetch_snapshot(
+        snapshot = asyncio.run(fetch_snapshot(
             email=creds["email"],
             password=creds["password"],
             base_url=creds["base_url"],
-        )
+        ))
     except GraphQLError as exc:
         print(f"Error fetching data: {exc}", file=sys.stderr)
         return 1

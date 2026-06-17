@@ -60,11 +60,24 @@ The integration appends `/v1/graphql/` to the base URL.
 | Supply Point `{fingerprint}` Latest Half-Hour Reading Time  | Latest half-hour start time, if authorized |
 | Supply Point `{fingerprint}` Interval Readings Access      | `authorized`, `unauthorized`, `disabled`, or `error` |
 | Supply Point `{fingerprint}` Half-Hour Readings Access     | `authorized`, `unauthorized`, `disabled`, or `error` |
+| Supply Point `{fingerprint}` Today Consumption             | Current JST day half-hourly consumption in kWh |
+| Supply Point `{fingerprint}` Today Cost                    | Current JST day half-hourly cost estimate in JPY |
+| Supply Point `{fingerprint}` This Week Consumption         | Current Monday-start JST week consumption in kWh |
+| Supply Point `{fingerprint}` This Week Cost                | Current Monday-start JST week cost estimate in JPY |
+| Supply Point `{fingerprint}` This Month Consumption        | Current JST calendar month consumption in kWh |
+| Supply Point `{fingerprint}` This Month Cost               | Current JST calendar month cost estimate in JPY |
+
+Aggregate consumption sensors use Home Assistant energy metadata (`kWh`, total state class).
+Aggregate cost sensors use monetary metadata (`JPY`, total state class). Aggregate attributes include
+`start`, `end`, `reading_count`, `total_consumption`, `total_cost`, `currency`, and
+`source=halfHourlyReadings`. If any included half-hourly reading lacks `costEstimate`, the cost
+sensor state is unavailable while consumption still sums from `value`.
 
 ## Data Update
 
-The coordinator polls every 15 minutes using `async_add_executor_job` so the stdlib
-`urllib` GraphQL call does not block the HA event loop.
+The coordinator polls every 15 minutes with a persistent async `httpx` GraphQL client. Half-hourly
+readings are fetched from the earlier of the current JST week start and month start through the
+current time, which covers the today/week/month aggregate sensors.
 
 ## Local Development & Tests
 

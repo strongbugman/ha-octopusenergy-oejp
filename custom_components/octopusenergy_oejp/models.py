@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
+from datetime import datetime, time, timedelta
+from decimal import Decimal, InvalidOperation
 from typing import Any, Iterable
+from zoneinfo import ZoneInfo
 
 
 ACCESS_AUTHORIZED = "authorized"
@@ -11,6 +14,17 @@ ACCESS_DISABLED = "disabled"
 ACCESS_ERROR = "error"
 ACCESS_NOT_REQUESTED = "not_requested"
 ACCESS_UNAUTHORIZED = "unauthorized"
+AGGREGATE_PERIOD_TODAY = "today"
+AGGREGATE_PERIOD_THIS_WEEK = "this_week"
+AGGREGATE_PERIOD_THIS_MONTH = "this_month"
+HALF_HOURLY_AGGREGATE_PERIODS = (
+    AGGREGATE_PERIOD_TODAY,
+    AGGREGATE_PERIOD_THIS_WEEK,
+    AGGREGATE_PERIOD_THIS_MONTH,
+)
+HALF_HOURLY_READINGS_SOURCE = "halfHourlyReadings"
+JPY_CURRENCY = "JPY"
+JST = ZoneInfo("Asia/Tokyo")
 
 
 @dataclass
@@ -92,6 +106,30 @@ class ElectricityHalfHourReading:
     value: Any
     cost_estimate: Any
     consumption_rate_band: str | None
+
+
+@dataclass(frozen=True)
+class HalfHourlyReadingAggregate:
+    """Aggregated half-hourly consumption/cost for a single current period."""
+
+    start: datetime
+    end: datetime
+    reading_count: int
+    total_consumption: float
+    total_cost: float | None
+    currency: str = JPY_CURRENCY
+    source: str = HALF_HOURLY_READINGS_SOURCE
+
+    def as_attributes(self) -> dict[str, Any]:
+        return {
+            "start": self.start.isoformat(),
+            "end": self.end.isoformat(),
+            "reading_count": self.reading_count,
+            "total_consumption": self.total_consumption,
+            "total_cost": self.total_cost,
+            "currency": self.currency,
+            "source": self.source,
+        }
 
 
 @dataclass
@@ -256,6 +294,137 @@ class EnergySnapshot:
                 continue
             for prop in account.properties:
                 yield from prop.electricity_supply_points
+
+
+def _as_jst(value: datetime | None = None) -> datetime:
+    if value is None:
+        value = datetime.now(JST)
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=JST)
+    return value.astimezone(JST).replace(microsecond=0)
+
+
+def current_half_hourly_periods(
+    now: datetime | None = None,
+) -> dict[str, tuple[datetime, datetime]]:
+    """Return current day/week/month boundaries in JST.
+
+    The week period starts on Monday, matching the default cost-tracker pattern.
+    """
+
+    local_now = _as_jst(now)
+    today_start = datetime.combine(local_now.date(), time.min, tzinfo=JST)
+    week_start = today_start - timedelta(days=today_start.weekday())
+    month_start = today_start.replace(day=1)
+    if month_start.month == 12:
+        next_month_start = month_start.replace(year=month_start.year + 1, month=1)
+    else:
+        next_month_start = month_start.replace(month=month_start.month + 1)
+    return {
+        AGGREGATE_PERIOD_TODAY: (today_start, today_start + timedelta(days=1)),
+        AGGREGATE_PERIOD_THIS_WEEK: (week_start, week_start + timedelta(days=7)),
+        AGGREGATE_PERIOD_THIS_MONTH: (month_start, next_month_start),
+    }
+
+
+def current_half_hourly_fetch_window(now: datetime | None = None) -> tuple[datetime, datetime]:
+    """Return the smallest half-hourly fetch window needed for all current aggregates."""
+
+    periods = current_half_hourly_periods(now)
+    from_datetime = min(start for start, _ in periods.values())
+    to_datetime = _as_jst(now)
+    return from_datetime, to_datetime
+
+
+def aggregate_supply_point_half_hourly_readings(
+    point: ElectricitySupplyPoint,
+    period: str,
+    *,
+    now: datetime | None = None,
+) -> HalfHourlyReadingAggregate:
+    """Aggregate one supply point's half-hourly readings for a current JST period."""
+
+    periods = current_half_hourly_periods(now)
+    try:
+        start, end = periods[period]
+    except KeyError as exc:
+        raise ValueError(f"Unknown half-hourly aggregate period: {period}") from exc
+    return aggregate_half_hourly_readings(point.half_hourly_readings, start=start, end=end)
+
+
+def aggregate_supply_point_half_hourly_periods(
+    point: ElectricitySupplyPoint,
+    *,
+    now: datetime | None = None,
+) -> dict[str, HalfHourlyReadingAggregate]:
+    """Aggregate one supply point's half-hourly readings for all current periods."""
+
+    return {
+        period: aggregate_supply_point_half_hourly_readings(point, period, now=now)
+        for period in HALF_HOURLY_AGGREGATE_PERIODS
+    }
+
+
+def aggregate_half_hourly_readings(
+    readings: Iterable[ElectricityHalfHourReading],
+    *,
+    start: datetime,
+    end: datetime,
+) -> HalfHourlyReadingAggregate:
+    """Aggregate half-hourly readings that start within ``[start, end)`` in JST."""
+
+    start = _as_jst(start)
+    end = _as_jst(end)
+    total_consumption = Decimal("0")
+    total_cost = Decimal("0")
+    cost_complete = True
+    reading_count = 0
+
+    for reading in readings:
+        reading_start = _parse_reading_datetime(reading.start_at)
+        if reading_start is None or not start <= reading_start < end:
+            continue
+        reading_count += 1
+
+        consumption = _decimal_or_none(reading.value)
+        if consumption is not None:
+            total_consumption += consumption
+
+        cost = _decimal_or_none(reading.cost_estimate)
+        if cost is None:
+            cost_complete = False
+        else:
+            total_cost += cost
+
+    return HalfHourlyReadingAggregate(
+        start=start,
+        end=end,
+        reading_count=reading_count,
+        total_consumption=float(total_consumption),
+        total_cost=float(total_cost) if cost_complete else None,
+    )
+
+
+def _parse_reading_datetime(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return _as_jst(parsed)
+
+
+def _decimal_or_none(value: Any) -> Decimal | None:
+    if value is None or value == "":
+        return None
+    try:
+        result = Decimal(str(value))
+    except (InvalidOperation, ValueError):
+        return None
+    if not result.is_finite():
+        return None
+    return result
 
 
 # --- Parsers ---

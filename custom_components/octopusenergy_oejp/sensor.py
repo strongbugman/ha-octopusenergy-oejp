@@ -7,15 +7,25 @@ from dataclasses import dataclass
 import hashlib
 from typing import Any
 
-from homeassistant.components.sensor import SensorEntity, SensorStateClass
+from homeassistant.components.sensor import SensorDeviceClass, SensorEntity, SensorStateClass
 from homeassistant.config_entries import ConfigEntry
+from homeassistant.const import UnitOfEnergy
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import DOMAIN
 from .coordinator import OctopusOejpDataUpdateCoordinator
-from .models import Account, ElectricitySupplyPoint, EnergySnapshot
+from .models import (
+    ACCESS_AUTHORIZED,
+    AGGREGATE_PERIOD_THIS_MONTH,
+    AGGREGATE_PERIOD_THIS_WEEK,
+    AGGREGATE_PERIOD_TODAY,
+    Account,
+    ElectricitySupplyPoint,
+    EnergySnapshot,
+    aggregate_supply_point_half_hourly_readings,
+)
 
 
 def _fingerprint(value: str) -> str:
@@ -46,6 +56,9 @@ class SupplyPointSensorData:
     name: str
     value_fn: Callable[[ElectricitySupplyPoint], Any]
     attributes_fn: Callable[[ElectricitySupplyPoint], dict[str, Any]]
+    native_unit_of_measurement: str | None = None
+    device_class: Any = None
+    state_class: Any = None
 
 
 def _empty_attributes(point: ElectricitySupplyPoint) -> dict[str, Any]:
@@ -99,6 +112,36 @@ def _latest_half_hourly_cost(point: ElectricitySupplyPoint) -> Any:
 def _latest_half_hourly_time(point: ElectricitySupplyPoint) -> str | None:
     reading = point.latest_half_hourly_reading
     return None if reading is None else reading.start_at
+
+
+def _aggregate_state(point: ElectricitySupplyPoint, state: Any, reading_count: int) -> Any:
+    if point.half_hourly_readings_access.status != ACCESS_AUTHORIZED and reading_count == 0:
+        return None
+    return state
+
+
+def _aggregate_consumption_value(period: str) -> Callable[[ElectricitySupplyPoint], Any]:
+    def value(point: ElectricitySupplyPoint) -> Any:
+        aggregate = aggregate_supply_point_half_hourly_readings(point, period)
+        return _aggregate_state(point, aggregate.total_consumption, aggregate.reading_count)
+
+    return value
+
+
+def _aggregate_cost_value(period: str) -> Callable[[ElectricitySupplyPoint], Any]:
+    def value(point: ElectricitySupplyPoint) -> Any:
+        aggregate = aggregate_supply_point_half_hourly_readings(point, period)
+        return _aggregate_state(point, aggregate.total_cost, aggregate.reading_count)
+
+    return value
+
+
+def _aggregate_attributes(period: str) -> Callable[[ElectricitySupplyPoint], dict[str, Any]]:
+    def attributes(point: ElectricitySupplyPoint) -> dict[str, Any]:
+        aggregate = aggregate_supply_point_half_hourly_readings(point, period)
+        return aggregate.as_attributes()
+
+    return attributes
 
 
 SUMMARY_SENSORS: tuple[SummarySensorData, ...] = (
@@ -186,6 +229,60 @@ SUPPLY_POINT_SENSORS: tuple[SupplyPointSensorData, ...] = (
         "Half-Hour Readings Access",
         lambda p: p.half_hourly_readings_access.status,
         _half_hourly_access_attributes,
+    ),
+    SupplyPointSensorData(
+        "today_consumption",
+        "Today Consumption",
+        _aggregate_consumption_value(AGGREGATE_PERIOD_TODAY),
+        _aggregate_attributes(AGGREGATE_PERIOD_TODAY),
+        native_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
+        device_class=SensorDeviceClass.ENERGY,
+        state_class=SensorStateClass.TOTAL,
+    ),
+    SupplyPointSensorData(
+        "today_cost",
+        "Today Cost",
+        _aggregate_cost_value(AGGREGATE_PERIOD_TODAY),
+        _aggregate_attributes(AGGREGATE_PERIOD_TODAY),
+        native_unit_of_measurement="JPY",
+        device_class=SensorDeviceClass.MONETARY,
+        state_class=SensorStateClass.TOTAL,
+    ),
+    SupplyPointSensorData(
+        "this_week_consumption",
+        "This Week Consumption",
+        _aggregate_consumption_value(AGGREGATE_PERIOD_THIS_WEEK),
+        _aggregate_attributes(AGGREGATE_PERIOD_THIS_WEEK),
+        native_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
+        device_class=SensorDeviceClass.ENERGY,
+        state_class=SensorStateClass.TOTAL,
+    ),
+    SupplyPointSensorData(
+        "this_week_cost",
+        "This Week Cost",
+        _aggregate_cost_value(AGGREGATE_PERIOD_THIS_WEEK),
+        _aggregate_attributes(AGGREGATE_PERIOD_THIS_WEEK),
+        native_unit_of_measurement="JPY",
+        device_class=SensorDeviceClass.MONETARY,
+        state_class=SensorStateClass.TOTAL,
+    ),
+    SupplyPointSensorData(
+        "this_month_consumption",
+        "This Month Consumption",
+        _aggregate_consumption_value(AGGREGATE_PERIOD_THIS_MONTH),
+        _aggregate_attributes(AGGREGATE_PERIOD_THIS_MONTH),
+        native_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
+        device_class=SensorDeviceClass.ENERGY,
+        state_class=SensorStateClass.TOTAL,
+    ),
+    SupplyPointSensorData(
+        "this_month_cost",
+        "This Month Cost",
+        _aggregate_cost_value(AGGREGATE_PERIOD_THIS_MONTH),
+        _aggregate_attributes(AGGREGATE_PERIOD_THIS_MONTH),
+        native_unit_of_measurement="JPY",
+        device_class=SensorDeviceClass.MONETARY,
+        state_class=SensorStateClass.TOTAL,
     ),
 )
 
@@ -335,6 +432,9 @@ class OctopusOejpSupplyPointSensor(
         self._point_fingerprint = point_fingerprint
         self._attr_name = name
         self._attr_unique_id = f"{entry.entry_id}_account_{account_fingerprint}_supply_{point_fingerprint}_{sensor_data.key}"
+        self._attr_native_unit_of_measurement = sensor_data.native_unit_of_measurement
+        self._attr_device_class = sensor_data.device_class
+        self._attr_state_class = sensor_data.state_class
         self._value_fn = sensor_data.value_fn
         self._attributes_fn = sensor_data.attributes_fn
 

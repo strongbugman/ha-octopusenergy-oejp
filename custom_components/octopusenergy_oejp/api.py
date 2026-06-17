@@ -1,14 +1,13 @@
-"""GraphQL client for the OEJP Kraken API (stdlib-only, no HA dependency)."""
+"""GraphQL client for the OEJP Kraken API (httpx async, no HA dependency)."""
 
 from __future__ import annotations
 
 import json
 import re
-import ssl
 from dataclasses import dataclass
 from typing import Any
-from urllib.error import HTTPError, URLError
-from urllib.request import Request, urlopen
+
+import httpx
 
 DEFAULT_GRAPHQL_URL = "https://api.oejp-kraken.energy/v1/graphql/"
 
@@ -225,13 +224,31 @@ class GraphQLOptionalResult:
 
 
 class GraphQLClient:
-    """Stdlib-only GraphQL client for the OEJP Kraken API."""
+    """Async GraphQL client for the OEJP Kraken API with a persistent httpx session."""
 
     def __init__(self, *, url: str = DEFAULT_GRAPHQL_URL, timeout: float = 30.0) -> None:
         self.url = url
         self.timeout = timeout
+        self._http: httpx.AsyncClient | None = None
 
-    def execute(
+    async def __aenter__(self) -> GraphQLClient:
+        self._get_http()
+        return self
+
+    async def __aexit__(self, *_: object) -> None:
+        await self.close()
+
+    async def close(self) -> None:
+        if self._http is not None:
+            await self._http.aclose()
+            self._http = None
+
+    def _get_http(self) -> httpx.AsyncClient:
+        if self._http is None:
+            self._http = httpx.AsyncClient(timeout=self.timeout)
+        return self._http
+
+    async def execute(
         self,
         query: str,
         variables: dict[str, Any] | None = None,
@@ -245,22 +262,21 @@ class GraphQLClient:
         }
         if token:
             headers["Authorization"] = token
-        request = Request(
-            self.url,
-            data=json.dumps(
-                {"query": query, "variables": variables or {}},
-                separators=(",", ":"),
-            ).encode("utf-8"),
-            headers=headers,
-            method="POST",
-        )
         try:
-            with urlopen(request, timeout=self.timeout, context=ssl.create_default_context()) as response:  # noqa: S310
-                payload = json.loads(response.read().decode("utf-8"))
-        except HTTPError as exc:
-            raw = exc.read().decode("utf-8", errors="replace")
-            raise GraphQLError(f"GraphQL HTTP {exc.code}: {_scrub(raw)}") from exc
-        except (URLError, TimeoutError) as exc:
+            response = await self._get_http().post(
+                self.url,
+                content=json.dumps(
+                    {"query": query, "variables": variables or {}},
+                    separators=(",", ":"),
+                ).encode("utf-8"),
+                headers=headers,
+            )
+            response.raise_for_status()
+            payload = response.json()
+        except httpx.HTTPStatusError as exc:
+            raw = exc.response.text
+            raise GraphQLError(f"GraphQL HTTP {exc.response.status_code}: {_scrub(raw)}") from exc
+        except httpx.RequestError as exc:
             raise GraphQLError(f"GraphQL network error: {_scrub(str(exc))}") from exc
         except json.JSONDecodeError as exc:
             raise GraphQLError("GraphQL response was not JSON") from exc
@@ -269,7 +285,7 @@ class GraphQLClient:
             raise GraphQLError("GraphQL returned errors", response_data=payload)
         return payload
 
-    def execute_optional(
+    async def execute_optional(
         self,
         query: str,
         variables: dict[str, Any] | None = None,
@@ -277,7 +293,7 @@ class GraphQLClient:
         token: str | None = None,
     ) -> GraphQLOptionalResult:
         try:
-            return GraphQLOptionalResult(payload=self.execute(query, variables, token=token))
+            return GraphQLOptionalResult(payload=await self.execute(query, variables, token=token))
         except GraphQLError as exc:
             partial_payload = (
                 exc.response_data
@@ -286,8 +302,8 @@ class GraphQLClient:
             )
             return GraphQLOptionalResult(payload=partial_payload, error=exc)
 
-    def obtain_token(self, *, email: str, password: str) -> GraphQLToken:
-        payload = self.execute(OBTAIN_TOKEN_MUTATION, {"email": email, "password": password})
+    async def obtain_token(self, *, email: str, password: str) -> GraphQLToken:
+        payload = await self.execute(OBTAIN_TOKEN_MUTATION, {"email": email, "password": password})
         data = ((payload.get("data") or {}).get("obtainKrakenToken") or {})
         access_token = data.get("token")
         if not access_token:
@@ -298,22 +314,22 @@ class GraphQLClient:
             payload=data,
         )
 
-    def viewer_energy_snapshot(self, *, token: str) -> dict[str, Any]:
-        return self.execute(VIEWER_ENERGY_QUERY, token=token)
+    async def viewer_energy_snapshot(self, *, token: str) -> dict[str, Any]:
+        return await self.execute(VIEWER_ENERGY_QUERY, token=token)
 
-    def account_interval_readings(
+    async def account_interval_readings(
         self,
         *,
         token: str,
         account_number: str,
     ) -> GraphQLOptionalResult:
-        return self.execute_optional(
+        return await self.execute_optional(
             ACCOUNT_INTERVAL_READINGS_QUERY,
             {"accountNumber": account_number},
             token=token,
         )
 
-    def account_half_hourly_readings(
+    async def account_half_hourly_readings(
         self,
         *,
         token: str,
@@ -321,7 +337,7 @@ class GraphQLClient:
         from_datetime: str,
         to_datetime: str,
     ) -> GraphQLOptionalResult:
-        return self.execute_optional(
+        return await self.execute_optional(
             ACCOUNT_HALF_HOURLY_READINGS_QUERY,
             {
                 "accountNumber": account_number,
@@ -331,7 +347,7 @@ class GraphQLClient:
             token=token,
         )
 
-    def fetch_snapshot(self, *, email: str, password: str) -> dict[str, Any]:
+    async def fetch_snapshot(self, *, email: str, password: str) -> dict[str, Any]:
         """Login then fetch the full ViewerEnergySnapshot."""
-        gql_token = self.obtain_token(email=email, password=password)
-        return self.viewer_energy_snapshot(token=gql_token.token)
+        gql_token = await self.obtain_token(email=email, password=password)
+        return await self.viewer_energy_snapshot(token=gql_token.token)

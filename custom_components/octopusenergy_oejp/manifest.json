@@ -6,6 +6,6 @@
   "config_flow": true,
   "documentation": "https://github.com/strongbugman/ha-octopusenergy-oejp-demo",
   "iot_class": "cloud_polling",
-  "requirements": [],
+  "requirements": ["httpx>=0.27"],
   "version": "0.1.0"
 }

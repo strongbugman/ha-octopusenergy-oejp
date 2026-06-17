@@ -32,12 +32,21 @@ def _install_ha_stubs() -> None:
         _attr_has_entity_name: bool = False
         _attr_name: str | None = None
         _attr_unique_id: str | None = None
+        _attr_device_class: Any = None
+        _attr_native_unit_of_measurement: Any = None
         _attr_state_class: Any = None
+
+    class SensorDeviceClass:
+        ENERGY = "energy"
+        MONETARY = "monetary"
 
     class SensorStateClass:
         MEASUREMENT = "measurement"
         TOTAL = "total"
         TOTAL_INCREASING = "total_increasing"
+
+    class UnitOfEnergy:
+        KILO_WATT_HOUR = "kWh"
 
     class ConfigEntry:
         def __init__(self, entry_id: str = "test-entry-id", data: dict | None = None):
@@ -61,7 +70,7 @@ def _install_ha_stubs() -> None:
             "ConfigFlow": ConfigFlow,
         },
         "homeassistant.core": {"HomeAssistant": HomeAssistant},
-        "homeassistant.const": {"CONF_PASSWORD": "password"},
+        "homeassistant.const": {"CONF_PASSWORD": "password", "UnitOfEnergy": UnitOfEnergy},
         "homeassistant.helpers": {},
         "homeassistant.helpers.update_coordinator": {
             "DataUpdateCoordinator": DataUpdateCoordinator,
@@ -71,6 +80,7 @@ def _install_ha_stubs() -> None:
         "homeassistant.helpers.entity_platform": {"AddEntitiesCallback": Any},
         "homeassistant.components": {},
         "homeassistant.components.sensor": {
+            "SensorDeviceClass": SensorDeviceClass,
             "SensorEntity": SensorEntity,
             "SensorStateClass": SensorStateClass,
         },

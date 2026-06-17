@@ -2,14 +2,23 @@
 
 from __future__ import annotations
 
+from datetime import datetime
+from zoneinfo import ZoneInfo
+
+import pytest
+
 from tests.conftest import SAMPLE_SNAPSHOT_RESPONSE
 from custom_components.octopusenergy_oejp.models import (
     ACCESS_AUTHORIZED,
     ACCESS_UNAUTHORIZED,
+    AGGREGATE_PERIOD_THIS_MONTH,
+    AGGREGATE_PERIOD_THIS_WEEK,
+    AGGREGATE_PERIOD_TODAY,
     AccessStatus,
     Account,
     Agreement,
     Bill,
+    ElectricityHalfHourReading,
     ElectricitySupplyPoint,
     EnergySnapshot,
     MarketSupplyAgreement,
@@ -18,10 +27,15 @@ from custom_components.octopusenergy_oejp.models import (
     Transaction,
     Viewer,
     access_status_from_graphql_error,
+    aggregate_supply_point_half_hourly_readings,
     apply_half_hourly_readings,
     apply_interval_readings,
+    current_half_hourly_fetch_window,
+    current_half_hourly_periods,
     parse_energy_snapshot,
 )
+
+JST = ZoneInfo("Asia/Tokyo")
 
 
 def test_parse_viewer_id():
@@ -252,6 +266,130 @@ def test_apply_half_hourly_readings_authorized():
     assert point.half_hourly_readings_access.status == ACCESS_AUTHORIZED
     assert point.latest_half_hourly_reading is not None
     assert point.latest_half_hourly_reading.value == "0.42"
+
+
+def test_current_half_hourly_period_boundaries_are_jst():
+    now = datetime(2026, 6, 17, 12, 34, 56, tzinfo=JST)
+    periods = current_half_hourly_periods(now)
+
+    assert periods[AGGREGATE_PERIOD_TODAY][0].isoformat() == "2026-06-17T00:00:00+09:00"
+    assert periods[AGGREGATE_PERIOD_TODAY][1].isoformat() == "2026-06-18T00:00:00+09:00"
+    assert periods[AGGREGATE_PERIOD_THIS_WEEK][0].isoformat() == "2026-06-15T00:00:00+09:00"
+    assert periods[AGGREGATE_PERIOD_THIS_MONTH][0].isoformat() == "2026-06-01T00:00:00+09:00"
+
+
+def test_current_half_hourly_fetch_window_covers_week_before_month_start():
+    now = datetime(2026, 7, 1, 12, 0, tzinfo=JST)
+    start, end = current_half_hourly_fetch_window(now)
+
+    assert start.isoformat() == "2026-06-29T00:00:00+09:00"
+    assert end.isoformat() == "2026-07-01T12:00:00+09:00"
+
+
+def test_aggregate_half_hourly_readings_by_current_periods():
+    snapshot = parse_energy_snapshot(SAMPLE_SNAPSHOT_RESPONSE)
+    point = next(snapshot.iter_supply_points())
+    point.half_hourly_readings = [
+        ElectricityHalfHourReading(
+            "2026-06-17T00:00:00+09:00",
+            "2026-06-17T00:30:00+09:00",
+            "0.5",
+            "15.2",
+            "standard",
+        ),
+        ElectricityHalfHourReading(
+            "2026-06-16T23:30:00+09:00",
+            "2026-06-17T00:00:00+09:00",
+            "0.4",
+            "12",
+            "standard",
+        ),
+        ElectricityHalfHourReading(
+            "2026-06-14T23:30:00+09:00",
+            "2026-06-15T00:00:00+09:00",
+            "0.3",
+            "9",
+            "standard",
+        ),
+    ]
+
+    now = datetime(2026, 6, 17, 12, 0, tzinfo=JST)
+    today = aggregate_supply_point_half_hourly_readings(
+        point, AGGREGATE_PERIOD_TODAY, now=now
+    )
+    week = aggregate_supply_point_half_hourly_readings(
+        point, AGGREGATE_PERIOD_THIS_WEEK, now=now
+    )
+    month = aggregate_supply_point_half_hourly_readings(
+        point, AGGREGATE_PERIOD_THIS_MONTH, now=now
+    )
+
+    assert today.reading_count == 1
+    assert today.total_consumption == pytest.approx(0.5)
+    assert today.total_cost == pytest.approx(15.2)
+    assert week.reading_count == 2
+    assert week.total_consumption == pytest.approx(0.9)
+    assert week.total_cost == pytest.approx(27.2)
+    assert month.reading_count == 3
+    assert month.total_consumption == pytest.approx(1.2)
+    assert month.total_cost == pytest.approx(36.2)
+    assert today.as_attributes()["source"] == "halfHourlyReadings"
+    assert today.as_attributes()["currency"] == "JPY"
+
+
+def test_aggregate_uses_jst_boundary_for_utc_readings():
+    snapshot = parse_energy_snapshot(SAMPLE_SNAPSHOT_RESPONSE)
+    point = next(snapshot.iter_supply_points())
+    point.half_hourly_readings = [
+        ElectricityHalfHourReading(
+            "2026-06-16T15:30:00+00:00",
+            "2026-06-16T16:00:00+00:00",
+            "0.7",
+            "21",
+            "standard",
+        ),
+        ElectricityHalfHourReading(
+            "2026-06-16T14:30:00+00:00",
+            "2026-06-16T15:00:00+00:00",
+            "0.9",
+            "27",
+            "standard",
+        ),
+    ]
+
+    aggregate = aggregate_supply_point_half_hourly_readings(
+        point,
+        AGGREGATE_PERIOD_TODAY,
+        now=datetime(2026, 6, 17, 12, 0, tzinfo=JST),
+    )
+
+    assert aggregate.reading_count == 1
+    assert aggregate.total_consumption == pytest.approx(0.7)
+    assert aggregate.total_cost == pytest.approx(21)
+
+
+def test_aggregate_cost_is_none_when_any_cost_estimate_missing():
+    snapshot = parse_energy_snapshot(SAMPLE_SNAPSHOT_RESPONSE)
+    point = next(snapshot.iter_supply_points())
+    point.half_hourly_readings = [
+        ElectricityHalfHourReading(
+            "2026-06-17T00:00:00+09:00",
+            "2026-06-17T00:30:00+09:00",
+            "0.5",
+            None,
+            "standard",
+        )
+    ]
+
+    aggregate = aggregate_supply_point_half_hourly_readings(
+        point,
+        AGGREGATE_PERIOD_TODAY,
+        now=datetime(2026, 6, 17, 12, 0, tzinfo=JST),
+    )
+
+    assert aggregate.reading_count == 1
+    assert aggregate.total_consumption == pytest.approx(0.5)
+    assert aggregate.total_cost is None
 
 
 def test_access_status_from_unauthorized_graphql_error():

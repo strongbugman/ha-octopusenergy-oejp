@@ -6,23 +6,29 @@ no real API calls are made.
 
 from __future__ import annotations
 
+from datetime import datetime
 import json
-from pathlib import Path
 from unittest.mock import patch
+from zoneinfo import ZoneInfo
 
 import pytest
 
 from custom_components.octopusenergy_oejp.cli import (
-    SensorRecord,
     build_sensor_records,
     format_json,
     format_table,
     load_credentials,
     main,
 )
-from custom_components.octopusenergy_oejp.models import parse_energy_snapshot
+from custom_components.octopusenergy_oejp.models import (
+    AccessStatus,
+    ElectricityHalfHourReading,
+    parse_energy_snapshot,
+)
 
 from .conftest import SAMPLE_SNAPSHOT_RESPONSE
+
+JST = ZoneInfo("Asia/Tokyo")
 
 
 # ---------------------------------------------------------------------------
@@ -171,8 +177,8 @@ def test_build_sensor_records_supply_point_count(sample_snapshot):
     # "Supply Point {fp} ..." sensors only — filter by startswith to exclude
     # the summary "Electricity Supply Points" sensor
     sp_records = [r for r in records if r.name.startswith("Supply Point")]
-    # 14 sensors per supply point × 1 supply point in sample data
-    assert len(sp_records) == 14
+    # 14 existing sensors + 6 aggregate sensors per supply point
+    assert len(sp_records) == 20
 
 
 def test_build_sensor_records_supply_point_has_fingerprint_attr(sample_snapshot):
@@ -217,6 +223,67 @@ def test_build_sensor_records_no_raw_ids_in_names(sample_snapshot):
         assert "ESP-001" not in r.name
 
 
+def test_build_sensor_records_aggregate_metadata_and_attributes(sample_snapshot):
+    point = next(sample_snapshot.iter_supply_points())
+    point.half_hourly_readings_access = AccessStatus.authorized("halfHourlyReadings")
+    point.half_hourly_readings = [
+        ElectricityHalfHourReading(
+            "2026-06-17T00:00:00+09:00",
+            "2026-06-17T00:30:00+09:00",
+            "0.5",
+            "15.2",
+            "standard",
+        )
+    ]
+
+    records = build_sensor_records(
+        sample_snapshot,
+        now=datetime(2026, 6, 17, 12, 0, tzinfo=JST),
+    )
+    consumption = next(r for r in records if r.name.endswith("Today Consumption"))
+    cost = next(r for r in records if r.name.endswith("Today Cost"))
+
+    assert consumption.state == 0.5
+    assert consumption.unit == "kWh"
+    assert consumption.device_class == "energy"
+    assert consumption.state_class == "total"
+    assert consumption.attributes["source"] == "halfHourlyReadings"
+    assert consumption.attributes["currency"] == "JPY"
+    assert consumption.attributes["reading_count"] == 1
+    assert consumption.attributes["total_consumption"] == 0.5
+    assert consumption.attributes["total_cost"] == 15.2
+    assert cost.state == 15.2
+    assert cost.unit == "JPY"
+    assert cost.device_class == "monetary"
+    assert cost.state_class == "total"
+
+
+def test_build_sensor_records_cost_aggregate_none_when_cost_missing(sample_snapshot):
+    point = next(sample_snapshot.iter_supply_points())
+    point.half_hourly_readings_access = AccessStatus.authorized("halfHourlyReadings")
+    point.half_hourly_readings = [
+        ElectricityHalfHourReading(
+            "2026-06-17T00:00:00+09:00",
+            "2026-06-17T00:30:00+09:00",
+            "0.5",
+            None,
+            "standard",
+        )
+    ]
+
+    records = build_sensor_records(
+        sample_snapshot,
+        now=datetime(2026, 6, 17, 12, 0, tzinfo=JST),
+    )
+    consumption = next(r for r in records if r.name.endswith("Today Consumption"))
+    cost = next(r for r in records if r.name.endswith("Today Cost"))
+
+    assert consumption.state == 0.5
+    assert cost.state is None
+    assert cost.attributes["total_consumption"] == 0.5
+    assert cost.attributes["total_cost"] is None
+
+
 # ---------------------------------------------------------------------------
 # format_json
 # ---------------------------------------------------------------------------
@@ -233,7 +300,14 @@ def test_format_json_record_schema(sample_snapshot):
     records = build_sensor_records(sample_snapshot)
     data = json.loads(format_json(records))
     first = data[0]
-    assert set(first.keys()) == {"name", "state", "unit", "device_class", "attributes"}
+    assert set(first.keys()) == {
+        "name",
+        "state",
+        "unit",
+        "device_class",
+        "state_class",
+        "attributes",
+    }
 
 
 def test_format_json_no_raw_account_ids(sample_snapshot):
