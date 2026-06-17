@@ -6,9 +6,35 @@ supply point, bill, and transaction data as HA sensors.
 
 ## Installation
 
-Copy `custom_components/octopusenergy_oejp/` into your Home Assistant `config/custom_components/`
-directory and restart HA. Then add the integration via **Settings → Integrations → Add Integration →
-Octopus Energy OEJP**.
+### Manual install from zip
+
+Build or download the release zip, then extract it into your Home Assistant config directory so the
+integration lands at:
+
+```text
+/config/custom_components/octopusenergy_oejp/manifest.json
+```
+
+For a local build from this repository:
+
+```bash
+.venv/bin/python scripts/package_integration.py
+```
+
+This creates `dist/octopusenergy_oejp-<version>.zip`. The archive contains
+`custom_components/octopusenergy_oejp/...` at the correct Home Assistant path and excludes local
+caches, tests, reports, API notes, `.env` files, and secret-looking files.
+
+After extracting the zip, restart Home Assistant. Home Assistant reads `manifest.json` and installs
+the listed `requirements` such as `httpx>=0.27` when the custom integration is loaded. Then add the
+integration via **Settings → Integrations → Add Integration → Octopus Energy OEJP**.
+
+### Manual install by copy
+
+If you are installing directly from a checkout, copy `custom_components/octopusenergy_oejp/` into
+your Home Assistant `/config/custom_components/` directory, restart Home Assistant, and add the
+integration from the UI. Do not copy `.env`, `.local/`, `reports/`, or test data into Home
+Assistant.
 
 ## Configuration
 
