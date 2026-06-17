@@ -4,6 +4,9 @@ from __future__ import annotations
 
 from tests.conftest import SAMPLE_SNAPSHOT_RESPONSE
 from custom_components.octopusenergy_oejp.models import (
+    ACCESS_AUTHORIZED,
+    ACCESS_UNAUTHORIZED,
+    AccessStatus,
     Account,
     Agreement,
     Bill,
@@ -14,6 +17,9 @@ from custom_components.octopusenergy_oejp.models import (
     Property,
     Transaction,
     Viewer,
+    access_status_from_graphql_error,
+    apply_half_hourly_readings,
+    apply_interval_readings,
     parse_energy_snapshot,
 )
 
@@ -157,3 +163,120 @@ def test_parse_account_with_no_properties():
     assert snapshot.account_count == 1
     assert snapshot.property_count == 0
     assert snapshot.supply_point_count == 0
+
+
+def test_parse_reading_schedule_fields():
+    point = (
+        parse_energy_snapshot(SAMPLE_SNAPSHOT_RESPONSE)
+        .viewer.accounts[0].properties[0].electricity_supply_points[0]
+    )
+    assert point.next_reading_date is None
+    assert point.next_next_reading_date is None
+    assert point.reading_date_day_of_month is None
+    assert point.meter_count == 1
+
+
+def test_apply_interval_readings_authorized():
+    snapshot = parse_energy_snapshot(SAMPLE_SNAPSHOT_RESPONSE)
+    raw = {
+        "data": {
+            "viewer": {
+                "accounts": [
+                    {
+                        "properties": [
+                            {
+                                "electricitySupplyPoints": [
+                                    {
+                                        "id": "ESP-001",
+                                        "intervalReadings": [
+                                            {
+                                                "readingDate": "2026-05-15",
+                                                "startAt": "2026-04-15T00:00:00+09:00",
+                                                "endAt": "2026-05-15T00:00:00+09:00",
+                                                "value": "123.45",
+                                                "costEstimate": "4567",
+                                                "hasHalfHourlyDataForPeriod": True,
+                                            }
+                                        ],
+                                    }
+                                ]
+                            }
+                        ]
+                    }
+                ]
+            }
+        }
+    }
+
+    apply_interval_readings(snapshot, raw, AccessStatus.authorized("intervalReadings"))
+    point = next(snapshot.iter_supply_points())
+    assert point.interval_readings_access.status == ACCESS_AUTHORIZED
+    assert point.latest_interval_reading is not None
+    assert point.latest_interval_reading.value == "123.45"
+    assert point.latest_interval_reading.cost_estimate == "4567"
+
+
+def test_apply_half_hourly_readings_authorized():
+    snapshot = parse_energy_snapshot(SAMPLE_SNAPSHOT_RESPONSE)
+    raw = {
+        "data": {
+            "viewer": {
+                "accounts": [
+                    {
+                        "properties": [
+                            {
+                                "electricitySupplyPoints": [
+                                    {
+                                        "id": "ESP-001",
+                                        "halfHourlyReadings": [
+                                            {
+                                                "startAt": "2026-05-15T10:00:00+09:00",
+                                                "endAt": "2026-05-15T10:30:00+09:00",
+                                                "value": "0.42",
+                                                "costEstimate": "12.3",
+                                                "consumptionRateBand": "standard",
+                                            }
+                                        ],
+                                    }
+                                ]
+                            }
+                        ]
+                    }
+                ]
+            }
+        }
+    }
+
+    apply_half_hourly_readings(snapshot, raw, AccessStatus.authorized("halfHourlyReadings"))
+    point = next(snapshot.iter_supply_points())
+    assert point.half_hourly_readings_access.status == ACCESS_AUTHORIZED
+    assert point.latest_half_hourly_reading is not None
+    assert point.latest_half_hourly_reading.value == "0.42"
+
+
+def test_access_status_from_unauthorized_graphql_error():
+    class FakeGraphQLError(Exception):
+        response_data = {
+            "errors": [
+                {
+                    "message": "Unauthorized.",
+                    "path": ["viewer", "accounts", 0, "intervalReadings"],
+                    "extensions": {"errorCode": "KT-CT-4501"},
+                }
+            ]
+        }
+
+    status = access_status_from_graphql_error("intervalReadings", FakeGraphQLError("GraphQL returned errors"))
+    assert status.status == ACCESS_UNAUTHORIZED
+    assert status.error_codes == ["KT-CT-4501"]
+    assert status.error_paths == ["viewer.accounts.0.intervalReadings"]
+
+
+def test_apply_readings_skips_null_partial_payload_points():
+    snapshot = parse_energy_snapshot(SAMPLE_SNAPSHOT_RESPONSE)
+    raw = {"data": {"viewer": {"accounts": [{"properties": [{"electricitySupplyPoints": [None]}]}]}}}
+    status = AccessStatus(field_name="intervalReadings", status=ACCESS_UNAUTHORIZED)
+    apply_interval_readings(snapshot, raw, status)
+    point = next(snapshot.iter_supply_points())
+    assert point.interval_readings == []
+    assert point.interval_readings_access.status == ACCESS_UNAUTHORIZED

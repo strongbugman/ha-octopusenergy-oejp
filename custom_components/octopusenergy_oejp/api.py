@@ -33,11 +33,36 @@ query ViewerEnergySnapshot {
       balance
       transactions(first: 5) {
         totalCount
-        edges { node { id postedDate amount title } }
+        edges {
+          node {
+            __typename
+            id
+            postedDate
+            createdAt
+            amount
+            balanceCarriedForward
+            isIssued
+            isHeld
+            isReversed
+            hasStatement
+            title
+            billingDocumentIdentifier
+            reasonCode
+          }
+        }
       }
       bills(first: 5) {
         totalCount
-        edges { node { id } }
+        edges {
+          node {
+            __typename
+            id
+            billType
+            fromDate
+            toDate
+            issuedDate
+          }
+        }
       }
       ... on Account {
         properties {
@@ -48,13 +73,111 @@ query ViewerEnergySnapshot {
             id
             spin
             status
-            meters { serialNumber }
-            agreements { id validFrom validTo product { __typename } }
+            nextReadingDate
+            nextNextReadingDate
+            readingDateDayOfMonth
+            supplyDetails {
+              amperage
+              kva
+              kw
+              validFrom
+            }
+            meters {
+              serialNumber
+              capacity
+            }
+            agreements {
+              id
+              validFrom
+              validTo
+              product {
+                __typename
+                ... on ElectricitySingleStepProduct {
+                  code
+                  displayName
+                }
+                ... on ElectricitySteppedProduct {
+                  code
+                  displayName
+                }
+                ... on ElectricityFitProduct {
+                  code
+                  displayName
+                }
+                ... on GasTieredProduct {
+                  code
+                  displayName
+                }
+              }
+            }
           }
         }
         marketSupplyAgreements(first: 10, active: true) {
           totalCount
-          edges { node { id validFrom validTo product { __typename } } }
+          edges {
+            node {
+              id
+              validFrom
+              validTo
+              product {
+                __typename
+                code
+                displayName
+                fullName
+                marketName
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+"""
+
+ACCOUNT_INTERVAL_READINGS_QUERY = """
+query AccountIntervalReadings($accountNumber: String!) {
+  account(accountNumber: $accountNumber) {
+    properties {
+      electricitySupplyPoints {
+        id
+        intervalReadings(sortOrder: DESC) {
+          readingDate
+          startAt
+          endAt
+          value
+          costEstimate
+          hasHalfHourlyDataForPeriod
+        }
+      }
+    }
+  }
+}
+"""
+
+ACCOUNT_HALF_HOURLY_READINGS_QUERY = """
+query AccountHalfHourlyReadings(
+  $accountNumber: String!
+  $fromDatetime: DateTime
+  $toDatetime: DateTime
+) {
+  account(accountNumber: $accountNumber) {
+    properties {
+      electricitySupplyPoints {
+        id
+        status
+        agreements {
+          validFrom
+        }
+        halfHourlyReadings(
+          fromDatetime: $fromDatetime
+          toDatetime: $toDatetime
+        ) {
+          consumptionRateBand
+          consumptionStep
+          costEstimate
+          startAt
+          value
         }
       }
     }
@@ -77,8 +200,28 @@ class GraphQLError(RuntimeError):
 
 @dataclass(frozen=True)
 class GraphQLToken:
-    token: str
+    """Tokens returned by obtainKrakenToken.
+
+    The GraphQL schema calls the authenticated request token `token`; this is
+    the access/Kraken JWT to send in the Authorization header.  `refreshToken`
+    is only retained separately for future refresh support and must not be used
+    for normal API queries.
+    """
+
+    access_token: str
+    refresh_token: str | None
     payload: dict[str, Any]
+
+    @property
+    def token(self) -> str:
+        """Backward-compatible alias for the access token."""
+        return self.access_token
+
+
+@dataclass(frozen=True)
+class GraphQLOptionalResult:
+    payload: dict[str, Any] | None = None
+    error: GraphQLError | None = None
 
 
 class GraphQLClient:
@@ -101,7 +244,7 @@ class GraphQLClient:
             "User-Agent": "ha-octopusenergy-oejp/0.1.0",
         }
         if token:
-            headers["Authorization"] = f"JWT {token}"
+            headers["Authorization"] = token
         request = Request(
             self.url,
             data=json.dumps(
@@ -126,16 +269,67 @@ class GraphQLClient:
             raise GraphQLError("GraphQL returned errors", response_data=payload)
         return payload
 
+    def execute_optional(
+        self,
+        query: str,
+        variables: dict[str, Any] | None = None,
+        *,
+        token: str | None = None,
+    ) -> GraphQLOptionalResult:
+        try:
+            return GraphQLOptionalResult(payload=self.execute(query, variables, token=token))
+        except GraphQLError as exc:
+            partial_payload = (
+                exc.response_data
+                if isinstance(exc.response_data, dict) and exc.response_data.get("data")
+                else None
+            )
+            return GraphQLOptionalResult(payload=partial_payload, error=exc)
+
     def obtain_token(self, *, email: str, password: str) -> GraphQLToken:
         payload = self.execute(OBTAIN_TOKEN_MUTATION, {"email": email, "password": password})
         data = ((payload.get("data") or {}).get("obtainKrakenToken") or {})
-        token = data.get("token")
-        if not token:
-            raise GraphQLError("obtainKrakenToken did not return a token", response_data=payload)
-        return GraphQLToken(token=token, payload=data)
+        access_token = data.get("token")
+        if not access_token:
+            raise GraphQLError("obtainKrakenToken did not return an access token", response_data=payload)
+        return GraphQLToken(
+            access_token=access_token,
+            refresh_token=data.get("refreshToken"),
+            payload=data,
+        )
 
     def viewer_energy_snapshot(self, *, token: str) -> dict[str, Any]:
         return self.execute(VIEWER_ENERGY_QUERY, token=token)
+
+    def account_interval_readings(
+        self,
+        *,
+        token: str,
+        account_number: str,
+    ) -> GraphQLOptionalResult:
+        return self.execute_optional(
+            ACCOUNT_INTERVAL_READINGS_QUERY,
+            {"accountNumber": account_number},
+            token=token,
+        )
+
+    def account_half_hourly_readings(
+        self,
+        *,
+        token: str,
+        account_number: str,
+        from_datetime: str,
+        to_datetime: str,
+    ) -> GraphQLOptionalResult:
+        return self.execute_optional(
+            ACCOUNT_HALF_HOURLY_READINGS_QUERY,
+            {
+                "accountNumber": account_number,
+                "fromDatetime": from_datetime,
+                "toDatetime": to_datetime,
+            },
+            token=token,
+        )
 
     def fetch_snapshot(self, *, email: str, password: str) -> dict[str, Any]:
         """Login then fetch the full ViewerEnergySnapshot."""

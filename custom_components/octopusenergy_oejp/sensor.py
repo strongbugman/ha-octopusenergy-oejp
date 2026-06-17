@@ -45,6 +45,60 @@ class SupplyPointSensorData:
     key: str
     name: str
     value_fn: Callable[[ElectricitySupplyPoint], Any]
+    attributes_fn: Callable[[ElectricitySupplyPoint], dict[str, Any]]
+
+
+def _empty_attributes(point: ElectricitySupplyPoint) -> dict[str, Any]:
+    return {}
+
+
+def _access_attributes(status: Any) -> dict[str, Any]:
+    attributes: dict[str, Any] = {"field_name": status.field_name}
+    if status.message:
+        attributes["error_message"] = status.message
+    if status.error_codes:
+        attributes["error_codes"] = status.error_codes
+    if status.error_paths:
+        attributes["error_paths"] = status.error_paths
+    return attributes
+
+
+def _interval_access_attributes(point: ElectricitySupplyPoint) -> dict[str, Any]:
+    return _access_attributes(point.interval_readings_access)
+
+
+def _half_hourly_access_attributes(point: ElectricitySupplyPoint) -> dict[str, Any]:
+    return _access_attributes(point.half_hourly_readings_access)
+
+
+def _latest_interval_value(point: ElectricitySupplyPoint) -> Any:
+    reading = point.latest_interval_reading
+    return None if reading is None else reading.value
+
+
+def _latest_interval_cost(point: ElectricitySupplyPoint) -> Any:
+    reading = point.latest_interval_reading
+    return None if reading is None else reading.cost_estimate
+
+
+def _latest_interval_date(point: ElectricitySupplyPoint) -> str | None:
+    reading = point.latest_interval_reading
+    return None if reading is None else reading.reading_date or reading.start_at
+
+
+def _latest_half_hourly_value(point: ElectricitySupplyPoint) -> Any:
+    reading = point.latest_half_hourly_reading
+    return None if reading is None else reading.value
+
+
+def _latest_half_hourly_cost(point: ElectricitySupplyPoint) -> Any:
+    reading = point.latest_half_hourly_reading
+    return None if reading is None else reading.cost_estimate
+
+
+def _latest_half_hourly_time(point: ElectricitySupplyPoint) -> str | None:
+    reading = point.latest_half_hourly_reading
+    return None if reading is None else reading.start_at
 
 
 SUMMARY_SENSORS: tuple[SummarySensorData, ...] = (
@@ -64,8 +118,75 @@ ACCOUNT_SENSORS: tuple[AccountSensorData, ...] = (
 )
 
 SUPPLY_POINT_SENSORS: tuple[SupplyPointSensorData, ...] = (
-    SupplyPointSensorData("status", "Status", lambda p: p.status),
-    SupplyPointSensorData("agreement_count", "Agreements", lambda p: len(p.agreements)),
+    SupplyPointSensorData("status", "Status", lambda p: p.status, _empty_attributes),
+    SupplyPointSensorData("agreement_count", "Agreements", lambda p: len(p.agreements), _empty_attributes),
+    SupplyPointSensorData("meter_count", "Meter Count", lambda p: p.meter_count, _empty_attributes),
+    SupplyPointSensorData(
+        "next_reading_date",
+        "Next Reading Date",
+        lambda p: p.next_reading_date,
+        _empty_attributes,
+    ),
+    SupplyPointSensorData(
+        "next_next_reading_date",
+        "Next Next Reading Date",
+        lambda p: p.next_next_reading_date,
+        _empty_attributes,
+    ),
+    SupplyPointSensorData(
+        "reading_date_day_of_month",
+        "Reading Day Of Month",
+        lambda p: p.reading_date_day_of_month,
+        _empty_attributes,
+    ),
+    SupplyPointSensorData(
+        "latest_interval_reading_value",
+        "Latest Interval Reading Value",
+        _latest_interval_value,
+        _empty_attributes,
+    ),
+    SupplyPointSensorData(
+        "latest_interval_reading_cost",
+        "Latest Interval Reading Cost",
+        _latest_interval_cost,
+        _empty_attributes,
+    ),
+    SupplyPointSensorData(
+        "latest_interval_reading_date",
+        "Latest Interval Reading Date",
+        _latest_interval_date,
+        _empty_attributes,
+    ),
+    SupplyPointSensorData(
+        "latest_half_hourly_reading_value",
+        "Latest Half-Hour Reading Value",
+        _latest_half_hourly_value,
+        _empty_attributes,
+    ),
+    SupplyPointSensorData(
+        "latest_half_hourly_reading_cost",
+        "Latest Half-Hour Reading Cost",
+        _latest_half_hourly_cost,
+        _empty_attributes,
+    ),
+    SupplyPointSensorData(
+        "latest_half_hourly_reading_time",
+        "Latest Half-Hour Reading Time",
+        _latest_half_hourly_time,
+        _empty_attributes,
+    ),
+    SupplyPointSensorData(
+        "interval_readings_access",
+        "Interval Readings Access",
+        lambda p: p.interval_readings_access.status,
+        _interval_access_attributes,
+    ),
+    SupplyPointSensorData(
+        "half_hourly_readings_access",
+        "Half-Hour Readings Access",
+        lambda p: p.half_hourly_readings_access.status,
+        _half_hourly_access_attributes,
+    ),
 )
 
 
@@ -215,6 +336,7 @@ class OctopusOejpSupplyPointSensor(
         self._attr_name = name
         self._attr_unique_id = f"{entry.entry_id}_account_{account_fingerprint}_supply_{point_fingerprint}_{sensor_data.key}"
         self._value_fn = sensor_data.value_fn
+        self._attributes_fn = sensor_data.attributes_fn
 
     def _find_point(self) -> ElectricitySupplyPoint | None:
         if self.coordinator.data is None:
@@ -237,4 +359,9 @@ class OctopusOejpSupplyPointSensor(
         point = self._find_point()
         if point is None:
             return {}
-        return {"meter_count": len(point.meters), "supply_point_fingerprint": self._point_fingerprint}
+        attributes = {
+            "meter_count": len(point.meters),
+            "supply_point_fingerprint": self._point_fingerprint,
+        }
+        attributes.update(self._attributes_fn(point))
+        return attributes

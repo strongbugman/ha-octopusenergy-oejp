@@ -60,3 +60,32 @@ def test_supply_point_sensor_uses_redacted_unique_id_and_attributes():
         "meter_count": 1,
         "supply_point_fingerprint": _fingerprint(point_id),
     }
+
+
+def test_supply_point_access_sensor_exposes_status_and_error_attributes():
+    from custom_components.octopusenergy_oejp.models import ACCESS_UNAUTHORIZED, AccessStatus
+
+    coordinator = _coordinator()
+    point = next(coordinator.data.iter_supply_points())
+    point.interval_readings_access = AccessStatus(
+        field_name="intervalReadings",
+        status=ACCESS_UNAUTHORIZED,
+        message="Unauthorized.",
+        error_codes=["KT-CT-4501"],
+        error_paths=["viewer.accounts.0.intervalReadings"],
+    )
+    spec = next(s for s in SUPPLY_POINT_SENSORS if s.key == "interval_readings_access")
+    sensor = OctopusOejpSupplyPointSensor(
+        coordinator,
+        ConfigEntry(entry_id="entry-1"),
+        "A-1234567",
+        "ESP-001",
+        spec,
+        "Supply Point Redacted Interval Readings Access",
+    )
+
+    assert sensor.native_value == ACCESS_UNAUTHORIZED
+    attrs = sensor.extra_state_attributes
+    assert attrs["field_name"] == "intervalReadings"
+    assert attrs["error_codes"] == ["KT-CT-4501"]
+    assert attrs["error_paths"] == ["viewer.accounts.0.intervalReadings"]

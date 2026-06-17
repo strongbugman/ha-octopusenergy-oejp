@@ -38,7 +38,9 @@ def test_obtain_token_returns_graphql_token():
         result = client.obtain_token(email="user@example.com", password="secret")
 
     assert isinstance(result, GraphQLToken)
-    assert result.token == "test-jwt-token"
+    assert result.access_token == "test-jwt-token"
+    assert result.refresh_token == "test-refresh-token"
+    assert result.token == result.access_token
     assert result.payload["refreshToken"] == "test-refresh-token"
 
 
@@ -46,11 +48,11 @@ def test_obtain_token_raises_when_no_token():
     client = GraphQLClient()
     with patch("custom_components.octopusenergy_oejp.api.urlopen") as mock_open:
         mock_open.return_value = _mock_response({"data": {"obtainKrakenToken": {}}})
-        with pytest.raises(GraphQLError, match="did not return a token"):
+        with pytest.raises(GraphQLError, match="did not return an access token"):
             client.obtain_token(email="user@example.com", password="bad")
 
 
-def test_execute_attaches_jwt_authorization_header():
+def test_execute_attaches_raw_authorization_header():
     captured = []
 
     def fake_urlopen(request, timeout, context):
@@ -62,7 +64,7 @@ def test_execute_attaches_jwt_authorization_header():
         client.viewer_energy_snapshot(token="test-jwt-token")
 
     assert len(captured) == 1
-    assert captured[0].get_header("Authorization") == "JWT test-jwt-token"
+    assert captured[0].get_header("Authorization") == "test-jwt-token"
 
 
 def test_execute_raises_on_graphql_errors():
@@ -108,3 +110,61 @@ def test_execute_raises_graphql_error_on_url_error():
     with patch("custom_components.octopusenergy_oejp.api.urlopen", side_effect=URLError("connection refused")):
         with pytest.raises(GraphQLError, match="GraphQL network error"):
             client.execute("query { viewer { id } }")
+
+
+def test_execute_optional_returns_partial_payload_and_error_on_graphql_error():
+    partial_payload = {
+        "errors": [{"message": "Unauthorized.", "extensions": {"errorCode": "KT-CT-4501"}}],
+        "data": {"viewer": {"accounts": []}},
+    }
+    client = GraphQLClient()
+    with patch("custom_components.octopusenergy_oejp.api.urlopen") as mock_open:
+        mock_open.return_value = _mock_response(partial_payload)
+        result = client.execute_optional("query { viewer { id } }", token="test-jwt-token")
+
+    assert result.payload == partial_payload
+    assert isinstance(result.error, GraphQLError)
+
+
+def test_account_half_hourly_readings_passes_account_and_datetime_variables():
+    captured = []
+
+    def fake_urlopen(request, timeout, context):
+        captured.append(json.loads(request.data.decode("utf-8")))
+        return _mock_response(SAMPLE_SNAPSHOT_RESPONSE)
+
+    client = GraphQLClient()
+    with patch("custom_components.octopusenergy_oejp.api.urlopen", side_effect=fake_urlopen):
+        result = client.account_half_hourly_readings(
+            token="test-jwt-token",
+            account_number="A-1234567",
+            from_datetime="2026-01-01T00:00:00+09:00",
+            to_datetime="2026-01-02T00:00:00+09:00",
+        )
+
+    assert result.error is None
+    assert captured[0]["variables"] == {
+        "accountNumber": "A-1234567",
+        "fromDatetime": "2026-01-01T00:00:00+09:00",
+        "toDatetime": "2026-01-02T00:00:00+09:00",
+    }
+    assert "account(accountNumber: $accountNumber)" in captured[0]["query"]
+
+
+def test_account_interval_readings_passes_account_number_variable():
+    captured = []
+
+    def fake_urlopen(request, timeout, context):
+        captured.append(json.loads(request.data.decode("utf-8")))
+        return _mock_response(SAMPLE_SNAPSHOT_RESPONSE)
+
+    client = GraphQLClient()
+    with patch("custom_components.octopusenergy_oejp.api.urlopen", side_effect=fake_urlopen):
+        result = client.account_interval_readings(
+            token="test-jwt-token",
+            account_number="A-1234567",
+        )
+
+    assert result.error is None
+    assert captured[0]["variables"] == {"accountNumber": "A-1234567"}
+    assert "account(accountNumber: $accountNumber)" in captured[0]["query"]
