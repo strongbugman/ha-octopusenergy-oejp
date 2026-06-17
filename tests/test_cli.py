@@ -23,8 +23,10 @@ from custom_components.octopusenergy_oejp.cli import (
 from custom_components.octopusenergy_oejp.models import (
     AccessStatus,
     ElectricityHalfHourReading,
+    ElectricityIntervalReading,
     parse_energy_snapshot,
 )
+from custom_components.octopusenergy_oejp.cli import _supply_point_records
 
 from .conftest import SAMPLE_SNAPSHOT_RESPONSE
 
@@ -177,8 +179,8 @@ def test_build_sensor_records_supply_point_count(sample_snapshot):
     # "Supply Point {fp} ..." sensors only — filter by startswith to exclude
     # the summary "Electricity Supply Points" sensor
     sp_records = [r for r in records if r.name.startswith("Supply Point")]
-    # 14 existing sensors + 6 aggregate sensors per supply point
-    assert len(sp_records) == 20
+    # 14 existing sensors + 6 period aggregate sensors + 2 cumulative sensors per supply point
+    assert len(sp_records) == 22
 
 
 def test_build_sensor_records_supply_point_has_fingerprint_attr(sample_snapshot):
@@ -399,3 +401,75 @@ def test_main_returns_1_on_api_error(monkeypatch, capsys):
         result = main(["--format", "json"])
     assert result == 1
     assert "auth failed" in capsys.readouterr().err
+
+
+def test_supply_point_records_include_cumulative_sensors():
+    snapshot = parse_energy_snapshot(SAMPLE_SNAPSHOT_RESPONSE)
+    point = next(snapshot.iter_supply_points())
+    point.interval_readings = [
+        ElectricityIntervalReading(
+            "2026-05-15", "2026-04-15T00:00:00+09:00", "2026-05-15T00:00:00+09:00",
+            "100.0", "3000", True,
+        ),
+    ]
+    point.half_hourly_readings = [
+        ElectricityHalfHourReading(
+            "2026-05-15T00:00:00+09:00", "2026-05-15T00:30:00+09:00",
+            "0.4", "12", "standard",
+        ),
+    ]
+
+    records = _supply_point_records(point)
+    cumul_names = [r.name for r in records if "Cumulative" in r.name]
+    assert len(cumul_names) == 2
+
+    consumption_rec = next(r for r in records if r.name.endswith("Cumulative Consumption"))
+    assert consumption_rec.unit == "kWh"
+    assert consumption_rec.device_class == "energy"
+    assert consumption_rec.state_class == "total_increasing"
+    assert consumption_rec.state == pytest.approx(100.4)
+    attrs = consumption_rec.attributes
+    assert attrs["interval_reading_count"] == 1
+    assert attrs["half_hourly_reading_count"] == 1
+    assert attrs["reading_count"] == 2
+    assert "intervalReadings" in attrs["sources"]
+    assert "halfHourlyReadings" in attrs["sources"]
+    assert attrs["total_cost"] == pytest.approx(3012.0)
+    assert "cost_note" not in attrs
+    assert "meter_count" in attrs
+    assert "supply_point_fingerprint" in attrs
+
+    cost_rec = next(r for r in records if r.name.endswith("Cumulative Cost"))
+    assert cost_rec.unit == "JPY"
+    assert cost_rec.device_class == "monetary"
+    assert cost_rec.state_class == "total"
+    assert cost_rec.state == pytest.approx(3012.0)
+
+
+def test_supply_point_records_cumulative_none_when_no_readings():
+    snapshot = parse_energy_snapshot(SAMPLE_SNAPSHOT_RESPONSE)
+    point = next(snapshot.iter_supply_points())
+    point.interval_readings = []
+    point.half_hourly_readings = []
+
+    records = _supply_point_records(point)
+    consumption_rec = next(r for r in records if r.name.endswith("Cumulative Consumption"))
+    cost_rec = next(r for r in records if r.name.endswith("Cumulative Cost"))
+
+    assert consumption_rec.state is None
+    assert cost_rec.state is None
+    assert consumption_rec.attributes["reading_count"] == 0
+    assert consumption_rec.attributes["sources"] == []
+
+
+def test_build_sensor_records_includes_cumulative():
+    snapshot = parse_energy_snapshot(SAMPLE_SNAPSHOT_RESPONSE)
+    records = build_sensor_records(snapshot)
+    names = [r.name for r in records]
+
+    cumulative_names = [n for n in names if "Cumulative" in n]
+    assert len(cumulative_names) == 2, f"Expected 2 cumulative records, got: {cumulative_names}"
+
+    for rec in records:
+        assert "ESP-001" not in rec.name
+        assert "A-1234567" not in rec.name

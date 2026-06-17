@@ -18,7 +18,9 @@ from custom_components.octopusenergy_oejp.models import (
     Account,
     Agreement,
     Bill,
+    CumulativeReadingAggregate,
     ElectricityHalfHourReading,
+    ElectricityIntervalReading,
     ElectricitySupplyPoint,
     EnergySnapshot,
     MarketSupplyAgreement,
@@ -27,6 +29,7 @@ from custom_components.octopusenergy_oejp.models import (
     Transaction,
     Viewer,
     access_status_from_graphql_error,
+    aggregate_supply_point_cumulative_readings,
     aggregate_supply_point_half_hourly_readings,
     apply_half_hourly_readings,
     apply_interval_readings,
@@ -418,3 +421,189 @@ def test_apply_readings_skips_null_partial_payload_points():
     point = next(snapshot.iter_supply_points())
     assert point.interval_readings == []
     assert point.interval_readings_access.status == ACCESS_UNAUTHORIZED
+
+
+# ---------------------------------------------------------------------------
+# Cumulative reading aggregate tests
+# ---------------------------------------------------------------------------
+
+def test_aggregate_cumulative_sums_all_interval_readings():
+    snapshot = parse_energy_snapshot(SAMPLE_SNAPSHOT_RESPONSE)
+    point = next(snapshot.iter_supply_points())
+    point.interval_readings = [
+        ElectricityIntervalReading(
+            "2026-04-15", "2026-03-15T00:00:00+09:00", "2026-04-15T00:00:00+09:00",
+            "100.0", "3000", True,
+        ),
+        ElectricityIntervalReading(
+            "2026-05-15", "2026-04-15T00:00:00+09:00", "2026-05-15T00:00:00+09:00",
+            "120.0", "3600", True,
+        ),
+    ]
+    point.half_hourly_readings = []
+
+    agg = aggregate_supply_point_cumulative_readings(point)
+
+    assert agg.interval_reading_count == 2
+    assert agg.half_hourly_reading_count == 0
+    assert agg.reading_count == 2
+    assert agg.total_consumption == pytest.approx(220.0)
+    assert agg.total_cost == pytest.approx(6600.0)
+    assert agg.currency == "JPY"
+    assert agg.cost_note is None
+    assert agg.start.isoformat() == "2026-03-15T00:00:00+09:00"
+    assert agg.latest_confirmed_end.isoformat() == "2026-05-15T00:00:00+09:00"
+
+    attrs = agg.as_attributes()
+    assert "intervalReadings" in attrs["sources"]
+    assert "halfHourlyReadings" not in attrs["sources"]
+    assert attrs["interval_reading_count"] == 2
+    assert attrs["half_hourly_reading_count"] == 0
+    assert attrs["reading_count"] == 2
+    assert attrs["latest_confirmed_end"] == "2026-05-15T00:00:00+09:00"
+    assert attrs["start"] == "2026-03-15T00:00:00+09:00"
+    assert "cost_note" not in attrs
+
+
+def test_aggregate_cumulative_appends_hh_after_interval_boundary():
+    snapshot = parse_energy_snapshot(SAMPLE_SNAPSHOT_RESPONSE)
+    point = next(snapshot.iter_supply_points())
+    point.interval_readings = [
+        ElectricityIntervalReading(
+            "2026-05-15", "2026-04-15T00:00:00+09:00", "2026-05-15T00:00:00+09:00",
+            "100.0", "3000", True,
+        ),
+    ]
+    # start < end_at of interval → excluded (covered by interval billing period)
+    # start == end_at of interval → included (first open period)
+    # start > end_at of interval → included
+    point.half_hourly_readings = [
+        ElectricityHalfHourReading(
+            "2026-05-14T23:00:00+09:00", "2026-05-14T23:30:00+09:00",
+            "0.5", "15", "standard",
+        ),
+        ElectricityHalfHourReading(
+            "2026-05-15T00:00:00+09:00", "2026-05-15T00:30:00+09:00",
+            "0.4", "12", "standard",
+        ),
+        ElectricityHalfHourReading(
+            "2026-05-15T12:00:00+09:00", "2026-05-15T12:30:00+09:00",
+            "0.3", "9", "standard",
+        ),
+    ]
+
+    agg = aggregate_supply_point_cumulative_readings(point)
+
+    assert agg.interval_reading_count == 1
+    assert agg.half_hourly_reading_count == 2
+    assert agg.reading_count == 3
+    assert agg.total_consumption == pytest.approx(100.7)
+    assert agg.total_cost == pytest.approx(3021.0)
+    assert agg.latest_confirmed_end.isoformat() == "2026-05-15T00:00:00+09:00"
+    attrs = agg.as_attributes()
+    assert "intervalReadings" in attrs["sources"]
+    assert "halfHourlyReadings" in attrs["sources"]
+
+
+def test_aggregate_cumulative_uses_all_hh_when_no_interval_readings():
+    snapshot = parse_energy_snapshot(SAMPLE_SNAPSHOT_RESPONSE)
+    point = next(snapshot.iter_supply_points())
+    point.interval_readings = []
+    point.half_hourly_readings = [
+        ElectricityHalfHourReading(
+            "2026-05-01T00:00:00+09:00", "2026-05-01T00:30:00+09:00",
+            "0.5", "15", "standard",
+        ),
+        ElectricityHalfHourReading(
+            "2026-05-01T00:30:00+09:00", "2026-05-01T01:00:00+09:00",
+            "0.6", "18", "standard",
+        ),
+    ]
+
+    agg = aggregate_supply_point_cumulative_readings(point)
+
+    assert agg.interval_reading_count == 0
+    assert agg.half_hourly_reading_count == 2
+    assert agg.reading_count == 2
+    assert agg.total_consumption == pytest.approx(1.1)
+    assert agg.total_cost == pytest.approx(33.0)
+    assert agg.latest_confirmed_end is None
+    assert agg.start.isoformat() == "2026-05-01T00:00:00+09:00"
+    attrs = agg.as_attributes()
+    assert "intervalReadings" not in attrs["sources"]
+    assert "halfHourlyReadings" in attrs["sources"]
+    assert "latest_confirmed_end" not in attrs
+
+
+def test_aggregate_cumulative_cost_note_when_cost_missing():
+    snapshot = parse_energy_snapshot(SAMPLE_SNAPSHOT_RESPONSE)
+    point = next(snapshot.iter_supply_points())
+    point.interval_readings = [
+        ElectricityIntervalReading(
+            "2026-05-15", "2026-04-15T00:00:00+09:00", "2026-05-15T00:00:00+09:00",
+            "100.0", None, True,
+        ),
+    ]
+    point.half_hourly_readings = []
+
+    agg = aggregate_supply_point_cumulative_readings(point)
+
+    assert agg.total_consumption == pytest.approx(100.0)
+    assert agg.total_cost is None
+    assert agg.cost_note is not None
+    assert "1 reading(s) missing costEstimate" in agg.cost_note
+    attrs = agg.as_attributes()
+    assert "cost_note" in attrs
+    assert attrs["total_cost"] is None
+
+
+def test_aggregate_cumulative_empty_readings():
+    snapshot = parse_energy_snapshot(SAMPLE_SNAPSHOT_RESPONSE)
+    point = next(snapshot.iter_supply_points())
+    point.interval_readings = []
+    point.half_hourly_readings = []
+
+    agg = aggregate_supply_point_cumulative_readings(point)
+
+    assert agg.reading_count == 0
+    assert agg.total_consumption == pytest.approx(0.0)
+    assert agg.total_cost is None
+    assert agg.cost_note is None
+    assert agg.start is None
+    assert agg.latest_confirmed_end is None
+    attrs = agg.as_attributes()
+    assert attrs["sources"] == []
+    assert "start" not in attrs
+    assert "latest_confirmed_end" not in attrs
+
+
+def test_aggregate_cumulative_interval_reading_date_fallback():
+    """reading_date (plain YYYY-MM-DD) is used as JST midnight boundary when end_at is absent."""
+    snapshot = parse_energy_snapshot(SAMPLE_SNAPSHOT_RESPONSE)
+    point = next(snapshot.iter_supply_points())
+    point.interval_readings = [
+        ElectricityIntervalReading(
+            "2026-05-15", "2026-04-15T00:00:00+09:00", None,
+            "100.0", "3000", False,
+        ),
+    ]
+    point.half_hourly_readings = [
+        ElectricityHalfHourReading(
+            "2026-05-14T12:00:00+09:00", "2026-05-14T12:30:00+09:00",
+            "0.5", "15", "standard",
+        ),
+        ElectricityHalfHourReading(
+            "2026-05-15T00:00:00+09:00", "2026-05-15T00:30:00+09:00",
+            "0.4", "12", "standard",
+        ),
+    ]
+
+    agg = aggregate_supply_point_cumulative_readings(point)
+
+    # reading_date "2026-05-15" → JST midnight 2026-05-15T00:00:00+09:00
+    # HH at 2026-05-14T12:00 → start < 2026-05-15T00:00 → excluded
+    # HH at 2026-05-15T00:00 → start >= 2026-05-15T00:00 → included
+    assert agg.interval_reading_count == 1
+    assert agg.half_hourly_reading_count == 1
+    assert agg.total_consumption == pytest.approx(100.4)
+    assert agg.latest_confirmed_end.isoformat() == "2026-05-15T00:00:00+09:00"

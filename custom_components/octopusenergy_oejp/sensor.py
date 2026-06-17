@@ -24,6 +24,7 @@ from .models import (
     Account,
     ElectricitySupplyPoint,
     EnergySnapshot,
+    aggregate_supply_point_cumulative_readings,
     aggregate_supply_point_half_hourly_readings,
 )
 
@@ -142,6 +143,20 @@ def _aggregate_attributes(period: str) -> Callable[[ElectricitySupplyPoint], dic
         return aggregate.as_attributes()
 
     return attributes
+
+
+def _cumulative_attributes(point: ElectricitySupplyPoint) -> dict[str, Any]:
+    return aggregate_supply_point_cumulative_readings(point).as_attributes()
+
+
+def _cumulative_consumption_value(point: ElectricitySupplyPoint) -> Any:
+    aggregate = aggregate_supply_point_cumulative_readings(point)
+    return None if aggregate.reading_count == 0 else aggregate.total_consumption
+
+
+def _cumulative_cost_value(point: ElectricitySupplyPoint) -> Any:
+    aggregate = aggregate_supply_point_cumulative_readings(point)
+    return None if aggregate.reading_count == 0 else aggregate.total_cost
 
 
 SUMMARY_SENSORS: tuple[SummarySensorData, ...] = (
@@ -280,6 +295,24 @@ SUPPLY_POINT_SENSORS: tuple[SupplyPointSensorData, ...] = (
         "This Month Cost",
         _aggregate_cost_value(AGGREGATE_PERIOD_THIS_MONTH),
         _aggregate_attributes(AGGREGATE_PERIOD_THIS_MONTH),
+        native_unit_of_measurement="JPY",
+        device_class=SensorDeviceClass.MONETARY,
+        state_class=SensorStateClass.TOTAL,
+    ),
+    SupplyPointSensorData(
+        "cumulative_consumption",
+        "Cumulative Consumption",
+        _cumulative_consumption_value,
+        _cumulative_attributes,
+        native_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
+        device_class=SensorDeviceClass.ENERGY,
+        state_class=SensorStateClass.TOTAL_INCREASING,
+    ),
+    SupplyPointSensorData(
+        "cumulative_cost",
+        "Cumulative Cost",
+        _cumulative_cost_value,
+        _cumulative_attributes,
         native_unit_of_measurement="JPY",
         device_class=SensorDeviceClass.MONETARY,
         state_class=SensorStateClass.TOTAL,

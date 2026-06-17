@@ -23,6 +23,7 @@ HALF_HOURLY_AGGREGATE_PERIODS = (
     AGGREGATE_PERIOD_THIS_MONTH,
 )
 HALF_HOURLY_READINGS_SOURCE = "halfHourlyReadings"
+INTERVAL_READINGS_SOURCE = "intervalReadings"
 JPY_CURRENCY = "JPY"
 JST = ZoneInfo("Asia/Tokyo")
 
@@ -130,6 +131,51 @@ class HalfHourlyReadingAggregate:
             "currency": self.currency,
             "source": self.source,
         }
+
+
+@dataclass(frozen=True)
+class CumulativeReadingAggregate:
+    """Cumulative consumption/cost across all available interval and half-hourly readings.
+
+    All intervalReadings are summed as confirmed billing periods. Half-hourly
+    readings whose start_at >= the latest interval reading end_at (falling back
+    to reading_date as JST midnight when end_at is absent) are then added to
+    extend coverage without double-counting. When no interval readings exist all
+    halfHourlyReadings are included directly.
+    """
+
+    total_consumption: float
+    total_cost: float | None
+    currency: str
+    interval_reading_count: int
+    half_hourly_reading_count: int
+    reading_count: int
+    start: datetime | None
+    latest_confirmed_end: datetime | None
+    cost_note: str | None
+
+    def as_attributes(self) -> dict[str, Any]:
+        sources: list[str] = []
+        if self.interval_reading_count > 0:
+            sources.append(INTERVAL_READINGS_SOURCE)
+        if self.half_hourly_reading_count > 0:
+            sources.append(HALF_HOURLY_READINGS_SOURCE)
+        attrs: dict[str, Any] = {
+            "sources": sources,
+            "reading_count": self.reading_count,
+            "interval_reading_count": self.interval_reading_count,
+            "half_hourly_reading_count": self.half_hourly_reading_count,
+            "total_consumption": self.total_consumption,
+            "total_cost": self.total_cost,
+            "currency": self.currency,
+        }
+        if self.start is not None:
+            attrs["start"] = self.start.isoformat()
+        if self.latest_confirmed_end is not None:
+            attrs["latest_confirmed_end"] = self.latest_confirmed_end.isoformat()
+        if self.cost_note is not None:
+            attrs["cost_note"] = self.cost_note
+        return attrs
 
 
 @dataclass
@@ -403,6 +449,115 @@ def aggregate_half_hourly_readings(
         total_consumption=float(total_consumption),
         total_cost=float(total_cost) if cost_complete else None,
     )
+
+
+def aggregate_supply_point_cumulative_readings(
+    point: ElectricitySupplyPoint,
+) -> CumulativeReadingAggregate:
+    """Aggregate all available readings as a running cumulative total.
+
+    All intervalReadings are summed first as confirmed billing periods.
+    halfHourlyReadings whose start_at >= the latest interval reading end_at
+    (falling back to reading_date as JST midnight) are then added without
+    double-counting. When no interval readings exist, all halfHourlyReadings
+    are included directly.
+    """
+    interval_consumption = Decimal("0")
+    interval_cost = Decimal("0")
+    interval_cost_complete = True
+    interval_missing = 0
+    interval_count = 0
+    earliest_start: datetime | None = None
+    latest_confirmed_end: datetime | None = None
+
+    for reading in point.interval_readings:
+        consumption = _decimal_or_none(reading.value)
+        if consumption is None:
+            continue
+        interval_count += 1
+        interval_consumption += consumption
+
+        cost = _decimal_or_none(reading.cost_estimate)
+        if cost is None:
+            interval_cost_complete = False
+            interval_missing += 1
+        else:
+            interval_cost += cost
+
+        start = _parse_reading_datetime(reading.start_at)
+        if start is not None and (earliest_start is None or start < earliest_start):
+            earliest_start = start
+
+        end = _parse_reading_datetime(reading.end_at) or _parse_reading_date_as_jst(
+            reading.reading_date
+        )
+        if end is not None and (latest_confirmed_end is None or end > latest_confirmed_end):
+            latest_confirmed_end = end
+
+    hh_consumption = Decimal("0")
+    hh_cost = Decimal("0")
+    hh_cost_complete = True
+    hh_missing = 0
+    hh_count = 0
+
+    for reading in point.half_hourly_readings:
+        start = _parse_reading_datetime(reading.start_at)
+        if start is None:
+            continue
+        if latest_confirmed_end is not None and start < latest_confirmed_end:
+            continue  # already covered by interval readings
+
+        consumption = _decimal_or_none(reading.value)
+        if consumption is None:
+            continue
+        hh_count += 1
+        hh_consumption += consumption
+
+        cost = _decimal_or_none(reading.cost_estimate)
+        if cost is None:
+            hh_cost_complete = False
+            hh_missing += 1
+        else:
+            hh_cost += cost
+
+        if interval_count == 0 and (earliest_start is None or start < earliest_start):
+            earliest_start = start
+
+    total_count = interval_count + hh_count
+    total_missing = interval_missing + hh_missing
+    if total_count == 0:
+        total_cost: float | None = None
+        cost_note = None
+    elif interval_cost_complete and hh_cost_complete:
+        total_cost = float(interval_cost + hh_cost)
+        cost_note = None
+    else:
+        total_cost = None
+        cost_note = f"cost unavailable: {total_missing} reading(s) missing costEstimate"
+
+    return CumulativeReadingAggregate(
+        total_consumption=float(interval_consumption + hh_consumption),
+        total_cost=total_cost,
+        currency=JPY_CURRENCY,
+        interval_reading_count=interval_count,
+        half_hourly_reading_count=hh_count,
+        reading_count=total_count,
+        start=earliest_start,
+        latest_confirmed_end=latest_confirmed_end,
+        cost_note=cost_note,
+    )
+
+
+def _parse_reading_date_as_jst(value: str | None) -> datetime | None:
+    """Parse a plain date string (YYYY-MM-DD) as JST midnight."""
+    if not value:
+        return None
+    try:
+        from datetime import date as _date
+        d = _date.fromisoformat(value)
+        return datetime.combine(d, time.min, tzinfo=JST)
+    except ValueError:
+        return None
 
 
 def _parse_reading_datetime(value: str | None) -> datetime | None:

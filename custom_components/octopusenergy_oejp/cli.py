@@ -31,6 +31,7 @@ from .models import (
     ElectricitySupplyPoint,
     EnergySnapshot,
     access_status_from_graphql_error,
+    aggregate_supply_point_cumulative_readings,
     aggregate_supply_point_half_hourly_readings,
     apply_half_hourly_readings,
     apply_interval_readings,
@@ -44,6 +45,7 @@ _JPY = "JPY"
 _DEVICE_CLASS_ENERGY = "energy"
 _DEVICE_CLASS_MONETARY = "monetary"
 _STATE_CLASS_TOTAL = "total"
+_STATE_CLASS_TOTAL_INCREASING = "total_increasing"
 
 
 # ---------------------------------------------------------------------------
@@ -257,6 +259,29 @@ def _supply_point_records(
         ),
     ]
     records.extend(_aggregate_records(point, prefix, base, now=now))
+
+    cumulative = aggregate_supply_point_cumulative_readings(point)
+    cumulative_attrs = {**base, **cumulative.as_attributes()}
+    records.extend(
+        [
+            SensorRecord(
+                f"{prefix} Cumulative Consumption",
+                None if cumulative.reading_count == 0 else cumulative.total_consumption,
+                unit=_KWH,
+                device_class=_DEVICE_CLASS_ENERGY,
+                state_class=_STATE_CLASS_TOTAL_INCREASING,
+                attributes=cumulative_attrs,
+            ),
+            SensorRecord(
+                f"{prefix} Cumulative Cost",
+                None if cumulative.reading_count == 0 else cumulative.total_cost,
+                unit=_JPY,
+                device_class=_DEVICE_CLASS_MONETARY,
+                state_class=_STATE_CLASS_TOTAL,
+                attributes=cumulative_attrs,
+            ),
+        ]
+    )
     return records
 
 
