@@ -179,8 +179,8 @@ def test_build_sensor_records_supply_point_count(sample_snapshot):
     # "Supply Point {fp} ..." sensors only — filter by startswith to exclude
     # the summary "Electricity Supply Points" sensor
     sp_records = [r for r in records if r.name.startswith("Supply Point")]
-    # 14 existing sensors + 6 period aggregate sensors + 2 cumulative sensors per supply point
-    assert len(sp_records) == 22
+    # 16 latest/status/access sensors + 6 period aggregate sensors + 2 cumulative sensors per supply point
+    assert len(sp_records) == 24
 
 
 def test_build_sensor_records_supply_point_has_fingerprint_attr(sample_snapshot):
@@ -260,6 +260,38 @@ def test_build_sensor_records_aggregate_metadata_and_attributes(sample_snapshot)
     assert cost.state_class == "total"
 
 
+def test_build_sensor_records_latest_half_hour_average_metadata_and_attributes(sample_snapshot):
+    point = next(sample_snapshot.iter_supply_points())
+    point.half_hourly_readings = [
+        ElectricityHalfHourReading(
+            "2026-06-17T00:30:00+09:00",
+            "2026-06-17T01:00:00+09:00",
+            "0.5",
+            "15",
+            "standard",
+        )
+    ]
+
+    records = build_sensor_records(sample_snapshot)
+    power = next(r for r in records if r.name.endswith("Latest Half-Hour Average Power"))
+    rate = next(r for r in records if r.name.endswith("Latest Half-Hour Average Cost Rate"))
+
+    assert power.state == 1000.0
+    assert power.unit == "W"
+    assert power.device_class == "power"
+    assert power.state_class == "measurement"
+    assert power.attributes["source"] == "halfHourlyReadings"
+    assert power.attributes["source_reading_start"] == "2026-06-17T00:30:00+09:00"
+    assert "not instantaneous live power" in power.attributes["note"]
+
+    assert rate.state == 30.0
+    assert rate.unit == "JPY/kWh"
+    assert rate.device_class is None
+    assert rate.state_class == "measurement"
+    assert rate.attributes["source_cost_jpy"] == 15.0
+    assert rate.attributes["currency"] == "JPY"
+
+
 def test_build_sensor_records_cost_aggregate_none_when_cost_missing(sample_snapshot):
     point = next(sample_snapshot.iter_supply_points())
     point.half_hourly_readings_access = AccessStatus.authorized("halfHourlyReadings")
@@ -310,6 +342,33 @@ def test_format_json_record_schema(sample_snapshot):
         "state_class",
         "attributes",
     }
+
+
+def test_format_json_latest_half_hour_average_fields(sample_snapshot):
+    point = next(sample_snapshot.iter_supply_points())
+    point.half_hourly_readings = [
+        ElectricityHalfHourReading(
+            "2026-06-17T00:30:00+09:00",
+            "2026-06-17T01:00:00+09:00",
+            "0.5",
+            "15",
+            "standard",
+        )
+    ]
+
+    records = build_sensor_records(sample_snapshot)
+    data = json.loads(format_json(records))
+    power = next(r for r in data if r["name"].endswith("Latest Half-Hour Average Power"))
+    rate = next(r for r in data if r["name"].endswith("Latest Half-Hour Average Cost Rate"))
+
+    assert power["state"] == 1000.0
+    assert power["unit"] == "W"
+    assert power["device_class"] == "power"
+    assert power["state_class"] == "measurement"
+    assert rate["state"] == 30.0
+    assert rate["unit"] == "JPY/kWh"
+    assert rate["device_class"] is None
+    assert rate["state_class"] == "measurement"
 
 
 def test_format_json_no_raw_account_ids(sample_snapshot):

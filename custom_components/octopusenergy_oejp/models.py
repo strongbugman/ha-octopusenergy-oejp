@@ -26,6 +26,8 @@ HALF_HOURLY_READINGS_SOURCE = "halfHourlyReadings"
 INTERVAL_READINGS_SOURCE = "intervalReadings"
 JPY_CURRENCY = "JPY"
 JST = ZoneInfo("Asia/Tokyo")
+HALF_HOUR_HOURS = Decimal("0.5")
+WATTS_PER_KILOWATT = Decimal("1000")
 
 
 @dataclass
@@ -175,6 +177,38 @@ class CumulativeReadingAggregate:
             attrs["latest_confirmed_end"] = self.latest_confirmed_end.isoformat()
         if self.cost_note is not None:
             attrs["cost_note"] = self.cost_note
+        return attrs
+
+
+@dataclass(frozen=True)
+class LatestHalfHourlyDerivedAttributes:
+    """Attributes for values derived from the latest half-hourly reading."""
+
+    calculation: str
+    note: str
+    source: str = HALF_HOURLY_READINGS_SOURCE
+    source_reading_start: str | None = None
+    source_reading_end: str | None = None
+    source_value_kwh: float | None = None
+    source_cost_jpy: float | None = None
+    currency: str | None = None
+
+    def as_attributes(self) -> dict[str, Any]:
+        attrs: dict[str, Any] = {
+            "source": self.source,
+            "calculation": self.calculation,
+            "note": self.note,
+        }
+        if self.source_reading_start is not None:
+            attrs["source_reading_start"] = self.source_reading_start
+        if self.source_reading_end is not None:
+            attrs["source_reading_end"] = self.source_reading_end
+        if self.source_value_kwh is not None:
+            attrs["source_value_kwh"] = self.source_value_kwh
+        if self.source_cost_jpy is not None:
+            attrs["source_cost_jpy"] = self.source_cost_jpy
+        if self.currency is not None:
+            attrs["currency"] = self.currency
         return attrs
 
 
@@ -545,6 +579,95 @@ def aggregate_supply_point_cumulative_readings(
         start=earliest_start,
         latest_confirmed_end=latest_confirmed_end,
         cost_note=cost_note,
+    )
+
+
+def latest_half_hourly_average_power_watts(point: ElectricitySupplyPoint) -> float | None:
+    """Return W from the latest half-hourly kWh reading, or ``None`` if unavailable."""
+
+    reading = point.latest_half_hourly_reading
+    if reading is None:
+        return None
+
+    consumption_kwh = _decimal_or_none(reading.value)
+    if consumption_kwh is None:
+        return None
+
+    return float(consumption_kwh / HALF_HOUR_HOURS * WATTS_PER_KILOWATT)
+
+
+def latest_half_hourly_average_cost_rate_jpy_per_kwh(
+    point: ElectricitySupplyPoint,
+) -> float | None:
+    """Return JPY/kWh from the latest half-hourly cost/value, or ``None``."""
+
+    reading = point.latest_half_hourly_reading
+    if reading is None:
+        return None
+
+    consumption_kwh = _decimal_or_none(reading.value)
+    if consumption_kwh is None or consumption_kwh == 0:
+        return None
+
+    cost_jpy = _decimal_or_none(reading.cost_estimate)
+    if cost_jpy is None:
+        return None
+
+    return float(cost_jpy / consumption_kwh)
+
+
+def latest_half_hourly_average_power_attributes(
+    point: ElectricitySupplyPoint,
+) -> dict[str, Any]:
+    """Attributes for the latest half-hour average power derived sensor."""
+
+    return _latest_half_hourly_derived_attributes(
+        point,
+        calculation="latest half-hour reading value kWh / 0.5h converted to W",
+        note="Average power over the latest half-hour reading; not instantaneous live power.",
+    ).as_attributes()
+
+
+def latest_half_hourly_average_cost_rate_attributes(
+    point: ElectricitySupplyPoint,
+) -> dict[str, Any]:
+    """Attributes for the latest half-hour average cost-rate derived sensor."""
+
+    return _latest_half_hourly_derived_attributes(
+        point,
+        calculation="latest half-hour reading costEstimate / latest half-hour reading value",
+        note="Effective cost rate derived from the latest half-hour reading cost and value.",
+        include_cost=True,
+        currency=JPY_CURRENCY,
+    ).as_attributes()
+
+
+def _latest_half_hourly_derived_attributes(
+    point: ElectricitySupplyPoint,
+    *,
+    calculation: str,
+    note: str,
+    include_cost: bool = False,
+    currency: str | None = None,
+) -> LatestHalfHourlyDerivedAttributes:
+    reading = point.latest_half_hourly_reading
+    if reading is None:
+        return LatestHalfHourlyDerivedAttributes(
+            calculation=calculation,
+            note=note,
+            currency=currency,
+        )
+
+    consumption_kwh = _decimal_or_none(reading.value)
+    cost_jpy = _decimal_or_none(reading.cost_estimate) if include_cost else None
+    return LatestHalfHourlyDerivedAttributes(
+        calculation=calculation,
+        note=note,
+        source_reading_start=reading.start_at,
+        source_reading_end=reading.end_at,
+        source_value_kwh=None if consumption_kwh is None else float(consumption_kwh),
+        source_cost_jpy=None if cost_jpy is None else float(cost_jpy),
+        currency=currency,
     )
 
 

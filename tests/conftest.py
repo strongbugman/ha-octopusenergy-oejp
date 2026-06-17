@@ -39,6 +39,7 @@ def _install_ha_stubs() -> None:
     class SensorDeviceClass:
         ENERGY = "energy"
         MONETARY = "monetary"
+        POWER = "power"
 
     class SensorStateClass:
         MEASUREMENT = "measurement"

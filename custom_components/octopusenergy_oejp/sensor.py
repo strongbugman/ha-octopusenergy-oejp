@@ -26,6 +26,10 @@ from .models import (
     EnergySnapshot,
     aggregate_supply_point_cumulative_readings,
     aggregate_supply_point_half_hourly_readings,
+    latest_half_hourly_average_cost_rate_attributes,
+    latest_half_hourly_average_cost_rate_jpy_per_kwh,
+    latest_half_hourly_average_power_attributes,
+    latest_half_hourly_average_power_watts,
 )
 
 
@@ -226,6 +230,23 @@ SUPPLY_POINT_SENSORS: tuple[SupplyPointSensorData, ...] = (
         "Latest Half-Hour Reading Cost",
         _latest_half_hourly_cost,
         _empty_attributes,
+    ),
+    SupplyPointSensorData(
+        "latest_half_hourly_average_power",
+        "Latest Half-Hour Average Power",
+        latest_half_hourly_average_power_watts,
+        latest_half_hourly_average_power_attributes,
+        native_unit_of_measurement="W",
+        device_class=SensorDeviceClass.POWER,
+        state_class=SensorStateClass.MEASUREMENT,
+    ),
+    SupplyPointSensorData(
+        "latest_half_hourly_average_cost_rate",
+        "Latest Half-Hour Average Cost Rate",
+        latest_half_hourly_average_cost_rate_jpy_per_kwh,
+        latest_half_hourly_average_cost_rate_attributes,
+        native_unit_of_measurement="JPY/kWh",
+        state_class=SensorStateClass.MEASUREMENT,
     ),
     SupplyPointSensorData(
         "latest_half_hourly_reading_time",

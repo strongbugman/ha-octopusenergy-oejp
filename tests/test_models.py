@@ -35,6 +35,10 @@ from custom_components.octopusenergy_oejp.models import (
     apply_interval_readings,
     current_half_hourly_fetch_window,
     current_half_hourly_periods,
+    latest_half_hourly_average_cost_rate_attributes,
+    latest_half_hourly_average_cost_rate_jpy_per_kwh,
+    latest_half_hourly_average_power_attributes,
+    latest_half_hourly_average_power_watts,
     parse_energy_snapshot,
 )
 
@@ -393,6 +397,116 @@ def test_aggregate_cost_is_none_when_any_cost_estimate_missing():
     assert aggregate.reading_count == 1
     assert aggregate.total_consumption == pytest.approx(0.5)
     assert aggregate.total_cost is None
+
+
+def test_latest_half_hourly_average_power_uses_latest_numeric_value():
+    snapshot = parse_energy_snapshot(SAMPLE_SNAPSHOT_RESPONSE)
+    point = next(snapshot.iter_supply_points())
+    point.half_hourly_readings = [
+        ElectricityHalfHourReading(
+            "2026-06-17T00:00:00+09:00",
+            "2026-06-17T00:30:00+09:00",
+            "0.25",
+            "7.5",
+            "standard",
+        ),
+        ElectricityHalfHourReading(
+            "2026-06-17T00:30:00+09:00",
+            "2026-06-17T01:00:00+09:00",
+            "0.42",
+            "12.3",
+            "standard",
+        ),
+    ]
+
+    assert latest_half_hourly_average_power_watts(point) == pytest.approx(840.0)
+    attrs = latest_half_hourly_average_power_attributes(point)
+    assert attrs["source"] == "halfHourlyReadings"
+    assert attrs["source_reading_start"] == "2026-06-17T00:30:00+09:00"
+    assert attrs["source_reading_end"] == "2026-06-17T01:00:00+09:00"
+    assert attrs["source_value_kwh"] == 0.42
+    assert "not instantaneous live power" in attrs["note"]
+
+
+@pytest.mark.parametrize("reading_value", [None, "", "not-a-number"])
+def test_latest_half_hourly_average_power_none_when_value_missing_or_non_numeric(reading_value):
+    snapshot = parse_energy_snapshot(SAMPLE_SNAPSHOT_RESPONSE)
+    point = next(snapshot.iter_supply_points())
+    point.half_hourly_readings = [
+        ElectricityHalfHourReading(
+            "2026-06-17T00:30:00+09:00",
+            "2026-06-17T01:00:00+09:00",
+            reading_value,
+            "12.3",
+            "standard",
+        )
+    ]
+
+    assert latest_half_hourly_average_power_watts(point) is None
+
+
+def test_latest_half_hourly_average_cost_rate_uses_latest_cost_and_value():
+    snapshot = parse_energy_snapshot(SAMPLE_SNAPSHOT_RESPONSE)
+    point = next(snapshot.iter_supply_points())
+    point.half_hourly_readings = [
+        ElectricityHalfHourReading(
+            "2026-06-17T00:30:00+09:00",
+            "2026-06-17T01:00:00+09:00",
+            "0.5",
+            "15",
+            "standard",
+        )
+    ]
+
+    assert latest_half_hourly_average_cost_rate_jpy_per_kwh(point) == pytest.approx(30.0)
+    attrs = latest_half_hourly_average_cost_rate_attributes(point)
+    assert attrs["source"] == "halfHourlyReadings"
+    assert attrs["source_reading_start"] == "2026-06-17T00:30:00+09:00"
+    assert attrs["source_value_kwh"] == 0.5
+    assert attrs["source_cost_jpy"] == 15.0
+    assert attrs["currency"] == "JPY"
+    assert "costEstimate" in attrs["calculation"]
+
+
+@pytest.mark.parametrize(
+    ("reading_value", "cost_estimate"),
+    [
+        ("0", "15"),
+        (None, "15"),
+        ("0.5", None),
+        ("not-a-number", "15"),
+        ("0.5", "not-a-number"),
+    ],
+)
+def test_latest_half_hourly_average_cost_rate_none_when_inputs_invalid(
+    reading_value,
+    cost_estimate,
+):
+    snapshot = parse_energy_snapshot(SAMPLE_SNAPSHOT_RESPONSE)
+    point = next(snapshot.iter_supply_points())
+    point.half_hourly_readings = [
+        ElectricityHalfHourReading(
+            "2026-06-17T00:30:00+09:00",
+            "2026-06-17T01:00:00+09:00",
+            reading_value,
+            cost_estimate,
+            "standard",
+        )
+    ]
+
+    assert latest_half_hourly_average_cost_rate_jpy_per_kwh(point) is None
+
+
+def test_latest_half_hourly_derived_values_none_when_no_reading():
+    snapshot = parse_energy_snapshot(SAMPLE_SNAPSHOT_RESPONSE)
+    point = next(snapshot.iter_supply_points())
+    point.half_hourly_readings = []
+
+    assert latest_half_hourly_average_power_watts(point) is None
+    assert latest_half_hourly_average_cost_rate_jpy_per_kwh(point) is None
+    attrs = latest_half_hourly_average_power_attributes(point)
+    assert attrs["source"] == "halfHourlyReadings"
+    assert "source_reading_start" not in attrs
 
 
 def test_access_status_from_unauthorized_graphql_error():

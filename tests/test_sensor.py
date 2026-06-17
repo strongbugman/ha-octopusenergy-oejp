@@ -172,3 +172,71 @@ def test_supply_point_aggregate_cost_sensor_is_none_when_cost_missing():
     attrs = sensor.extra_state_attributes
     assert attrs["total_consumption"] == 0.42
     assert attrs["total_cost"] is None
+
+
+def test_supply_point_latest_half_hour_average_power_sensor_metadata_and_attributes():
+    coordinator = _coordinator()
+    point = next(coordinator.data.iter_supply_points())
+    point.half_hourly_readings = [
+        ElectricityHalfHourReading(
+            "2026-06-17T00:30:00+09:00",
+            "2026-06-17T01:00:00+09:00",
+            "0.42",
+            "12.3",
+            "standard",
+        )
+    ]
+    spec = next(s for s in SUPPLY_POINT_SENSORS if s.key == "latest_half_hourly_average_power")
+    sensor = OctopusOejpSupplyPointSensor(
+        coordinator,
+        ConfigEntry(entry_id="entry-1"),
+        "A-1234567",
+        "ESP-001",
+        spec,
+        "Supply Point Redacted Latest Half-Hour Average Power",
+    )
+
+    assert sensor.native_value == 840.0
+    assert sensor._attr_native_unit_of_measurement == "W"
+    assert sensor._attr_device_class == "power"
+    assert sensor._attr_state_class == "measurement"
+    attrs = sensor.extra_state_attributes
+    assert attrs["source"] == "halfHourlyReadings"
+    assert attrs["source_reading_start"] == "2026-06-17T00:30:00+09:00"
+    assert attrs["source_reading_end"] == "2026-06-17T01:00:00+09:00"
+    assert attrs["source_value_kwh"] == 0.42
+    assert "not instantaneous live power" in attrs["note"]
+
+
+def test_supply_point_latest_half_hour_average_cost_rate_sensor_metadata_and_attributes():
+    coordinator = _coordinator()
+    point = next(coordinator.data.iter_supply_points())
+    point.half_hourly_readings = [
+        ElectricityHalfHourReading(
+            "2026-06-17T00:30:00+09:00",
+            "2026-06-17T01:00:00+09:00",
+            "0.5",
+            "15",
+            "standard",
+        )
+    ]
+    spec = next(s for s in SUPPLY_POINT_SENSORS if s.key == "latest_half_hourly_average_cost_rate")
+    sensor = OctopusOejpSupplyPointSensor(
+        coordinator,
+        ConfigEntry(entry_id="entry-1"),
+        "A-1234567",
+        "ESP-001",
+        spec,
+        "Supply Point Redacted Latest Half-Hour Average Cost Rate",
+    )
+
+    assert sensor.native_value == 30.0
+    assert sensor._attr_native_unit_of_measurement == "JPY/kWh"
+    assert sensor._attr_device_class is None
+    assert sensor._attr_state_class == "measurement"
+    attrs = sensor.extra_state_attributes
+    assert attrs["source"] == "halfHourlyReadings"
+    assert attrs["source_reading_start"] == "2026-06-17T00:30:00+09:00"
+    assert attrs["source_value_kwh"] == 0.5
+    assert attrs["source_cost_jpy"] == 15.0
+    assert attrs["currency"] == "JPY"

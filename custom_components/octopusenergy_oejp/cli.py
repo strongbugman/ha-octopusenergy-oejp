@@ -36,14 +36,22 @@ from .models import (
     apply_half_hourly_readings,
     apply_interval_readings,
     current_half_hourly_fetch_window,
+    latest_half_hourly_average_cost_rate_attributes,
+    latest_half_hourly_average_cost_rate_jpy_per_kwh,
+    latest_half_hourly_average_power_attributes,
+    latest_half_hourly_average_power_watts,
     parse_energy_snapshot,
 )
 
 _DEFAULT_BASE_URL = "https://api.oejp-kraken.energy"
 _KWH = "kWh"
 _JPY = "JPY"
+_W = "W"
+_JPY_PER_KWH = "JPY/kWh"
 _DEVICE_CLASS_ENERGY = "energy"
 _DEVICE_CLASS_MONETARY = "monetary"
+_DEVICE_CLASS_POWER = "power"
+_STATE_CLASS_MEASUREMENT = "measurement"
 _STATE_CLASS_TOTAL = "total"
 _STATE_CLASS_TOTAL_INCREASING = "total_increasing"
 
@@ -246,6 +254,21 @@ def _supply_point_records(
             (ir.reading_date or ir.start_at) if ir else None),
         rec("Latest Half-Hour Reading Value", hhr.value if hhr else None),
         rec("Latest Half-Hour Reading Cost", hhr.cost_estimate if hhr else None),
+        SensorRecord(
+            f"{prefix} Latest Half-Hour Average Power",
+            latest_half_hourly_average_power_watts(point),
+            unit=_W,
+            device_class=_DEVICE_CLASS_POWER,
+            state_class=_STATE_CLASS_MEASUREMENT,
+            attributes={**base, **latest_half_hourly_average_power_attributes(point)},
+        ),
+        SensorRecord(
+            f"{prefix} Latest Half-Hour Average Cost Rate",
+            latest_half_hourly_average_cost_rate_jpy_per_kwh(point),
+            unit=_JPY_PER_KWH,
+            state_class=_STATE_CLASS_MEASUREMENT,
+            attributes={**base, **latest_half_hourly_average_cost_rate_attributes(point)},
+        ),
         rec("Latest Half-Hour Reading Time", hhr.start_at if hhr else None),
         SensorRecord(
             f"{prefix} Interval Readings Access",

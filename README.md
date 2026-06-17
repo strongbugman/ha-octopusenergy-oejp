@@ -83,6 +83,8 @@ The integration appends `/v1/graphql/` to the base URL.
 | Supply Point `{fingerprint}` Latest Interval Reading Date  | Latest interval reading date, if authorized |
 | Supply Point `{fingerprint}` Latest Half-Hour Reading Value | Latest half-hour value, if authorized |
 | Supply Point `{fingerprint}` Latest Half-Hour Reading Cost  | Latest half-hour cost estimate, if authorized |
+| Supply Point `{fingerprint}` Latest Half-Hour Average Power | Average W derived from latest half-hour kWh; not live instantaneous power |
+| Supply Point `{fingerprint}` Latest Half-Hour Average Cost Rate | Effective JPY/kWh derived from latest half-hour cost/value |
 | Supply Point `{fingerprint}` Latest Half-Hour Reading Time  | Latest half-hour start time, if authorized |
 | Supply Point `{fingerprint}` Interval Readings Access      | `authorized`, `unauthorized`, `disabled`, or `error` |
 | Supply Point `{fingerprint}` Half-Hour Readings Access     | `authorized`, `unauthorized`, `disabled`, or `error` |
@@ -92,6 +94,11 @@ The integration appends `/v1/graphql/` to the base URL.
 | Supply Point `{fingerprint}` This Week Cost                | Current Monday-start JST week cost estimate in JPY |
 | Supply Point `{fingerprint}` This Month Consumption        | Current JST calendar month consumption in kWh |
 | Supply Point `{fingerprint}` This Month Cost               | Current JST calendar month cost estimate in JPY |
+
+Latest half-hour average power uses Home Assistant power metadata (`W`, measurement state class).
+Latest half-hour average cost rate uses `JPY/kWh` with measurement state class. Both include
+attributes naming `halfHourlyReadings` as the source plus the source reading start/end where
+available; the power sensor is an interval average and is not instantaneous live power.
 
 Aggregate consumption sensors use Home Assistant energy metadata (`kWh`, total state class).
 Aggregate cost sensors use monetary metadata (`JPY`, total state class). Aggregate attributes include
