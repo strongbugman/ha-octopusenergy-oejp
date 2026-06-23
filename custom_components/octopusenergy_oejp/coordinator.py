@@ -11,6 +11,7 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, Upda
 
 from .api import GraphQLClient, GraphQLError, GraphQLOptionalResult
 from .const import CONF_BASE_URL, CONF_EMAIL, CONF_PASSWORD, DEFAULT_BASE_URL, DOMAIN
+from .statistics import async_insert_statistics
 from .models import (
     AccessStatus,
     EnergySnapshot,
@@ -90,6 +91,7 @@ class OctopusOejpDataUpdateCoordinator(DataUpdateCoordinator[EnergySnapshot]):
                 self._access_status("halfHourlyReadings", half_hourly_result),
                 account_number=account.number,
             )
+        await async_insert_statistics(self.hass, snapshot)
         return snapshot
 
     async def close(self) -> None:

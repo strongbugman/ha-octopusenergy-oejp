@@ -64,6 +64,34 @@ def _install_ha_stubs() -> None:
     class FlowResult(dict):
         pass
 
+    class StatisticData:
+        def __init__(self, *, start, state=None, sum=None, mean=None):
+            self.start = start
+            self.state = state
+            self.sum = sum
+            self.mean = mean
+
+    class StatisticMetaData:
+        def __init__(
+            self,
+            *,
+            statistic_id,
+            source,
+            name,
+            unit_of_measurement,
+            has_mean,
+            has_sum,
+        ):
+            self.statistic_id = statistic_id
+            self.source = source
+            self.name = name
+            self.unit_of_measurement = unit_of_measurement
+            self.has_mean = has_mean
+            self.has_sum = has_sum
+
+    def async_add_external_statistics(hass, metadata, statistics):
+        pass
+
     stubs: dict[str, dict[str, Any]] = {
         "homeassistant": {},
         "homeassistant.config_entries": {
@@ -84,6 +112,12 @@ def _install_ha_stubs() -> None:
             "SensorDeviceClass": SensorDeviceClass,
             "SensorEntity": SensorEntity,
             "SensorStateClass": SensorStateClass,
+        },
+        "homeassistant.components.recorder": {},
+        "homeassistant.components.recorder.statistics": {
+            "async_add_external_statistics": async_add_external_statistics,
+            "StatisticData": StatisticData,
+            "StatisticMetaData": StatisticMetaData,
         },
         "homeassistant.data_entry_flow": {"FlowResult": FlowResult},
     }
