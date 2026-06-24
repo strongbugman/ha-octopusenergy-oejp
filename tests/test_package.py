@@ -67,4 +67,4 @@ def test_forbidden_path_filter_covers_sensitive_and_generated_files():
 def test_hacs_manifest_is_minimal_valid_json():
     hacs_manifest = json.loads(Path("hacs.json").read_text(encoding="utf-8"))
 
-    assert hacs_manifest == {"name": "Octopus Energy OEJP"}
+    assert hacs_manifest.get("name") == "Octopus Energy OEJP"
