@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import datetime
 import hashlib
 from typing import Any
 
@@ -11,10 +12,11 @@ from homeassistant.components.sensor import SensorDeviceClass, SensorEntity, Sen
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import UnitOfEnergy
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import DOMAIN
+from .const import DEFAULT_NAME, DOMAIN
 from .coordinator import OctopusOejpDataUpdateCoordinator
 from .models import (
     ACCESS_AUTHORIZED,
@@ -64,6 +66,7 @@ class SupplyPointSensorData:
     native_unit_of_measurement: str | None = None
     device_class: Any = None
     state_class: Any = None
+    last_reset_fn: Callable[[ElectricitySupplyPoint], datetime | None] | None = None
 
 
 def _empty_attributes(point: ElectricitySupplyPoint) -> dict[str, Any]:
@@ -147,6 +150,13 @@ def _aggregate_attributes(period: str) -> Callable[[ElectricitySupplyPoint], dic
         return aggregate.as_attributes()
 
     return attributes
+
+
+def _aggregate_last_reset(period: str) -> Callable[[ElectricitySupplyPoint], datetime | None]:
+    def last_reset(point: ElectricitySupplyPoint) -> datetime | None:
+        return aggregate_supply_point_half_hourly_readings(point, period).start
+
+    return last_reset
 
 
 def _cumulative_attributes(point: ElectricitySupplyPoint) -> dict[str, Any]:
@@ -274,6 +284,7 @@ SUPPLY_POINT_SENSORS: tuple[SupplyPointSensorData, ...] = (
         native_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
         device_class=SensorDeviceClass.ENERGY,
         state_class=SensorStateClass.TOTAL,
+        last_reset_fn=_aggregate_last_reset(AGGREGATE_PERIOD_TODAY),
     ),
     SupplyPointSensorData(
         "today_cost",
@@ -283,6 +294,7 @@ SUPPLY_POINT_SENSORS: tuple[SupplyPointSensorData, ...] = (
         native_unit_of_measurement="JPY",
         device_class=SensorDeviceClass.MONETARY,
         state_class=SensorStateClass.TOTAL,
+        last_reset_fn=_aggregate_last_reset(AGGREGATE_PERIOD_TODAY),
     ),
     SupplyPointSensorData(
         "this_week_consumption",
@@ -292,6 +304,7 @@ SUPPLY_POINT_SENSORS: tuple[SupplyPointSensorData, ...] = (
         native_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
         device_class=SensorDeviceClass.ENERGY,
         state_class=SensorStateClass.TOTAL,
+        last_reset_fn=_aggregate_last_reset(AGGREGATE_PERIOD_THIS_WEEK),
     ),
     SupplyPointSensorData(
         "this_week_cost",
@@ -301,6 +314,7 @@ SUPPLY_POINT_SENSORS: tuple[SupplyPointSensorData, ...] = (
         native_unit_of_measurement="JPY",
         device_class=SensorDeviceClass.MONETARY,
         state_class=SensorStateClass.TOTAL,
+        last_reset_fn=_aggregate_last_reset(AGGREGATE_PERIOD_THIS_WEEK),
     ),
     SupplyPointSensorData(
         "this_month_consumption",
@@ -310,6 +324,7 @@ SUPPLY_POINT_SENSORS: tuple[SupplyPointSensorData, ...] = (
         native_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
         device_class=SensorDeviceClass.ENERGY,
         state_class=SensorStateClass.TOTAL,
+        last_reset_fn=_aggregate_last_reset(AGGREGATE_PERIOD_THIS_MONTH),
     ),
     SupplyPointSensorData(
         "this_month_cost",
@@ -319,6 +334,7 @@ SUPPLY_POINT_SENSORS: tuple[SupplyPointSensorData, ...] = (
         native_unit_of_measurement="JPY",
         device_class=SensorDeviceClass.MONETARY,
         state_class=SensorStateClass.TOTAL,
+        last_reset_fn=_aggregate_last_reset(AGGREGATE_PERIOD_THIS_MONTH),
     ),
     SupplyPointSensorData(
         "cumulative_consumption",
@@ -409,9 +425,18 @@ class OctopusOejpSummarySensor(
         sensor_data: SummarySensorData,
     ) -> None:
         super().__init__(coordinator)
+        self._entry_id = entry.entry_id
         self._attr_name = sensor_data.name
         self._attr_unique_id = f"{entry.entry_id}_{sensor_data.key}"
         self._value_fn = sensor_data.value_fn
+
+    @property
+    def device_info(self) -> DeviceInfo:
+        return DeviceInfo(
+            identifiers={(DOMAIN, self._entry_id)},
+            name=DEFAULT_NAME,
+            manufacturer="Octopus Energy",
+        )
 
     @property
     def native_value(self) -> Any:
@@ -440,6 +465,14 @@ class OctopusOejpAccountSensor(
         self._attr_name = f"Account {account_fingerprint} {sensor_data.name}"
         self._attr_unique_id = f"{entry.entry_id}_account_{account_fingerprint}_{sensor_data.key}"
         self._value_fn = sensor_data.value_fn
+
+    @property
+    def device_info(self) -> DeviceInfo:
+        return DeviceInfo(
+            identifiers={(DOMAIN, f"account_{self._account_fingerprint}")},
+            name=f"Account {self._account_fingerprint}",
+            manufacturer="Octopus Energy",
+        )
 
     def _find_account(self) -> Account | None:
         if self.coordinator.data is None:
@@ -482,6 +515,7 @@ class OctopusOejpSupplyPointSensor(
         account_fingerprint = _fingerprint(account_number)
         point_fingerprint = _fingerprint(point_id)
         self._account_number = account_number
+        self._account_fingerprint = account_fingerprint
         self._point_id = point_id
         self._point_fingerprint = point_fingerprint
         self._attr_name = name
@@ -491,6 +525,26 @@ class OctopusOejpSupplyPointSensor(
         self._attr_state_class = sensor_data.state_class
         self._value_fn = sensor_data.value_fn
         self._attributes_fn = sensor_data.attributes_fn
+        self._last_reset_fn = sensor_data.last_reset_fn
+
+    @property
+    def device_info(self) -> DeviceInfo:
+        return DeviceInfo(
+            identifiers={(DOMAIN, f"supply_point_{self._point_fingerprint}")},
+            name=f"Supply Point {self._point_fingerprint}",
+            manufacturer="Octopus Energy",
+            model="Kraken Electricity Supply Point",
+            via_device=(DOMAIN, f"account_{self._account_fingerprint}"),
+        )
+
+    @property
+    def last_reset(self) -> datetime | None:
+        if self._last_reset_fn is None:
+            return None
+        point = self._find_point()
+        if point is None:
+            return None
+        return self._last_reset_fn(point)
 
     def _find_point(self) -> ElectricitySupplyPoint | None:
         if self.coordinator.data is None:

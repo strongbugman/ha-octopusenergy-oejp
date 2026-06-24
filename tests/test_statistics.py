@@ -185,6 +185,7 @@ def test_async_insert_statistics_calls_add_external_statistics():
                     (),
                     {
                         "async_add_external_statistics": staticmethod(_mock_add),
+                        "get_last_statistics": staticmethod(lambda *args, **kwargs: {}),
                         "StatisticData": StatisticData,
                         "StatisticMetaData": StatisticMetaData,
                     },
@@ -227,6 +228,7 @@ def test_async_insert_statistics_skips_point_with_no_readings():
                 (),
                 {
                     "async_add_external_statistics": staticmethod(_mock_add),
+                    "get_last_statistics": staticmethod(lambda *args, **kwargs: {}),
                     "StatisticData": StatisticData,
                     "StatisticMetaData": StatisticMetaData,
                 },

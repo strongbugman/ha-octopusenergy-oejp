@@ -54,6 +54,10 @@ def _install_ha_stubs() -> None:
             self.entry_id = entry_id
             self.data = data or {}
 
+    class DeviceInfo:
+        def __init__(self, **kwargs: Any) -> None:
+            self.__dict__.update(kwargs)
+
     class ConfigFlow:
         def __init_subclass__(cls, domain: str | None = None, **kwargs: Any) -> None:
             super().__init_subclass__(**kwargs)
@@ -92,6 +96,9 @@ def _install_ha_stubs() -> None:
     def async_add_external_statistics(hass, metadata, statistics):
         pass
 
+    def get_last_statistics(hass, number_of_stats, statistic_id, convert_units, types):
+        return {}
+
     stubs: dict[str, dict[str, Any]] = {
         "homeassistant": {},
         "homeassistant.config_entries": {
@@ -106,6 +113,7 @@ def _install_ha_stubs() -> None:
             "UpdateFailed": UpdateFailed,
             "CoordinatorEntity": CoordinatorEntity,
         },
+        "homeassistant.helpers.device_registry": {"DeviceInfo": DeviceInfo},
         "homeassistant.helpers.entity_platform": {"AddEntitiesCallback": Any},
         "homeassistant.components": {},
         "homeassistant.components.sensor": {

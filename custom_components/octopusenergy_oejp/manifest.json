@@ -1,7 +1,7 @@
 {
   "domain": "octopusenergy_oejp",
   "name": "Octopus Energy OEJP",
-  "after_dependencies": [],
+  "after_dependencies": ["recorder"],
   "codeowners": [],
   "config_flow": true,
   "documentation": "https://github.com/strongbugman/ha-octopusenergy-oejp-demo",

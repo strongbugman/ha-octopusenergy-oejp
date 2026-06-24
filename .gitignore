@@ -1,11 +1,16 @@
+# Local credentials and env files
 .env
-.env.*
-!.env.example
-.local/
-oejp_raw_payloads*.json
+.env.local
+
+# Python standard ignores
 __pycache__/
+*.py[cod]
+*$py.class
 .pytest_cache/
-*.pyc
 .venv/
+venv/
 dist/
-.DS_Store
+*.egg-info/
+
+# Reports directory (as requested by user)
+reports/

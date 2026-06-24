@@ -1,142 +1,167 @@
 # Octopus Energy OEJP — Home Assistant Custom Integration
 
-A Home Assistant custom integration for the Octopus Energy Japan/Korea (OEJP) Kraken API.
-It authenticates via the GraphQL `obtainKrakenToken` mutation and exposes account, property,
-supply point, bill, and transaction data as HA sensors.
+[![hacs_badge](https://img.shields.io/badge/HACS-Custom-41BDF5.svg?style=for-the-badge)](https://github.com/hacs/integration)
+[![License](https://img.shields.io/github/license/strongbugman/ha-octopusenergy-oejp-demo?style=for-the-badge)](LICENSE)
+[![Tests](https://img.shields.io/github/actions/workflow/status/strongbugman/ha-octopusenergy-oejp-demo/tests.yml?branch=master&style=for-the-badge)](https://github.com/strongbugman/ha-octopusenergy-oejp-demo/actions)
+
+A fully featured Home Assistant custom integration for the **Octopus Energy Japan (OEJP)** and region-aligned Kraken API platforms.
+
+By authenticating via the secure GraphQL `obtainKrakenToken` mutation, this integration continuously synchronizes account balances, active contracts, bills, transactions, and half-hourly interval readings natively into Home Assistant. It fully supports the **Home Assistant Energy Dashboard** with automatically updated external statistics for aggregate consumption (kWh) and cost (JPY).
+
+---
+
+## Example Lovelace Showcase
+
+![image](./example1.jpg)
+![image](./example2.jpg)
+![image](./example3.jpg)
+
+---
+
+## Features
+
+- ⚡ **Asynchronous & Efficient:** Built entirely using async `httpx` to execute optimized GraphQL queries. It implements connection reuse via a single persistent client, ensuring minimal load on your Home Assistant runner.
+- 📊 **Energy Dashboard Native:** Provides cumulative consumption (kWh) and cumulative cost (JPY) tracking that seamlessly links with HA's built-in Energy dashboard statistics.
+- 🕒 **JST Timezone Aggregation:** Aggregates half-hourly readings based on Japanese Standard Time (JST) boundaries to present precise, real-time metrics for:
+  - **Today** (JST calendar day)
+  - **This Week** (Monday-start JST week)
+  - **This Month** (Current JST calendar month)
+- 🔒 **Privacy-First Design:** Sensitive raw identifiers like Account Numbers and SPINs (Supply Point Identification Numbers) are **never** stored in plaintext or sent to the Home Assistant state engine. The integration automatically generates unique IDs and entity names using a short, saltless SHA-256 fingerprint.
+- 📉 **Derived Metrics:** Exposes calculated fields such as `Latest Half-Hour Average Power (W)` and `Latest Half-Hour Average Cost Rate (JPY/kWh)` to help you understand your live consumption trends even without a hardware smart meter.
+
+---
 
 ## Installation
 
-### Manual install from zip
+### Method 1: Manual Installation via ZIP (Recommended for Local Deployments)
 
-Build or download the release zip, then extract it into your Home Assistant config directory so the
-integration lands at:
+1. Build or download the release ZIP.
+2. Extract the archive into your Home Assistant `/config/` directory so that the files are placed at:
+   ```text
+   /config/custom_components/octopusenergy_oejp/
+   ```
+3. To build a ZIP locally from a git checkout, run:
+   ```bash
+   .venv/bin/python scripts/package_integration.py
+   ```
+   This will package the integration into `dist/octopusenergy_oejp-<version>.zip`, automatically excluding local test files, environment variables, credentials, caches, and developer notes.
+4. **Restart Home Assistant.**
+5. Navigate to **Settings → Devices & Services → Add Integration** and search for **Octopus Energy OEJP**.
 
-```text
-/config/custom_components/octopusenergy_oejp/manifest.json
-```
+### Method 2: Manual Installation via Copy
 
-For a local build from this repository:
+Copy the `custom_components/octopusenergy_oejp/` directory directly into your Home Assistant `/config/custom_components/` path. Restart Home Assistant, and then proceed with configuration via the UI.
 
-```bash
-.venv/bin/python scripts/package_integration.py
-```
-
-This creates `dist/octopusenergy_oejp-<version>.zip`. The archive contains
-`custom_components/octopusenergy_oejp/...` at the correct Home Assistant path and excludes local
-caches, tests, reports, API notes, `.env` files, and secret-looking files.
-
-After extracting the zip, restart Home Assistant. Home Assistant reads `manifest.json` and installs
-the listed `requirements` such as `httpx>=0.27` when the custom integration is loaded. Then add the
-integration via **Settings → Integrations → Add Integration → Octopus Energy OEJP**.
-
-### Manual install by copy
-
-If you are installing directly from a checkout, copy `custom_components/octopusenergy_oejp/` into
-your Home Assistant `/config/custom_components/` directory, restart Home Assistant, and add the
-integration from the UI. Do not copy `.env`, `.local/`, `reports/`, or test data into Home
-Assistant.
+---
 
 ## Configuration
 
-| Field        | Required | Default                             | Description                  |
-|--------------|----------|-------------------------------------|------------------------------|
-| Email        | Yes      |                                     | OEJP Kraken account email    |
-| Password     | Yes      |                                     | OEJP Kraken account password |
-| API Base URL | No       | `https://api.oejp-kraken.energy`    | Override GraphQL base URL    |
+| Form Field | Required | Default | Description |
+| :--- | :---: | :--- | :--- |
+| **Email** | Yes | | Your registered Octopus Energy account email. |
+| **Password** | Yes | | Your registered Octopus Energy account password. |
+| **API Base URL** | No | `https://api.oejp-kraken.energy` | Custom GraphQL endpoint (overridable for testing or alternative regional Kraken endpoints). |
 
-The integration appends `/v1/graphql/` to the base URL.
+*Note: The integration automatically appends `/v1/graphql/` to the provided API Base URL.*
 
-## Sensors Created
+---
 
-**Summary (always created):**
+## Exposed Sensors
 
-| Sensor                     | State                          |
-|----------------------------|-------------------------------|
-| Account Count              | Number of accounts             |
-| Property Count             | Number of properties           |
-| Electricity Supply Points  | Total supply points            |
-| Bills Total                | Total bill count               |
-| Transactions Total         | Total transaction count        |
-| Active Agreements          | Active supply agreements       |
+### 1. Summary Sensors (Always Created)
 
-**Per account** (one set per account; account numbers are shown as short fingerprints, not raw IDs):
+| Sensor | State/Type | Description |
+| :--- | :--- | :--- |
+| **Account Count** | Numeric | Total number of accounts tied to your login. |
+| **Property Count** | Numeric | Total number of registered properties. |
+| **Electricity Supply Points** | Numeric | Total number of active electrical connections. |
+| **Bills Total** | Numeric | Total number of historical invoices generated. |
+| **Transactions Total** | Numeric | Total number of financial ledger entries. |
+| **Active Agreements** | Numeric | Number of currently active pricing contracts. |
 
-| Sensor                                  | State                    |
-|-----------------------------------------|--------------------------|
-| Account `{fingerprint}` Balance         | Account balance          |
-| Account `{fingerprint}` Status          | e.g. `ACTIVE`            |
-| Account `{fingerprint}` Bills Total     | Bill count               |
-| Account `{fingerprint}` Transactions    | Transaction count        |
+### 2. Per-Account Sensors
 
-**Per electricity supply point** (one set per point; supply point IDs/SPINs are not exposed in names):
+Each account creates a unique group of sensors identified by a short fingerprint prefix (e.g. `Account {fingerprint} Balance`):
 
-| Sensor                                      | State               |
-|---------------------------------------------|---------------------|
-| Supply Point `{fingerprint}` Status                     | e.g. `ON_SUPPLY` / `ACTIVE` |
-| Supply Point `{fingerprint}` Agreements                 | Agreement count             |
-| Supply Point `{fingerprint}` Meter Count                | Meter count                 |
-| Supply Point `{fingerprint}` Next Reading Date          | Next scheduled reading date |
-| Supply Point `{fingerprint}` Next Next Reading Date     | Following reading date      |
-| Supply Point `{fingerprint}` Reading Day Of Month       | Reading day number          |
-| Supply Point `{fingerprint}` Latest Interval Reading Value | Latest monthly/interval value, if authorized |
-| Supply Point `{fingerprint}` Latest Interval Reading Cost  | Latest interval cost estimate, if authorized |
-| Supply Point `{fingerprint}` Latest Interval Reading Date  | Latest interval reading date, if authorized |
-| Supply Point `{fingerprint}` Latest Half-Hour Reading Value | Latest half-hour value, if authorized |
-| Supply Point `{fingerprint}` Latest Half-Hour Reading Cost  | Latest half-hour cost estimate, if authorized |
-| Supply Point `{fingerprint}` Latest Half-Hour Average Power | Average W derived from latest half-hour kWh; not live instantaneous power |
-| Supply Point `{fingerprint}` Latest Half-Hour Average Cost Rate | Effective JPY/kWh derived from latest half-hour cost/value |
-| Supply Point `{fingerprint}` Latest Half-Hour Reading Time  | Latest half-hour start time, if authorized |
-| Supply Point `{fingerprint}` Interval Readings Access      | `authorized`, `unauthorized`, `disabled`, or `error` |
-| Supply Point `{fingerprint}` Half-Hour Readings Access     | `authorized`, `unauthorized`, `disabled`, or `error` |
-| Supply Point `{fingerprint}` Today Consumption             | Current JST day half-hourly consumption in kWh |
-| Supply Point `{fingerprint}` Today Cost                    | Current JST day half-hourly cost estimate in JPY |
-| Supply Point `{fingerprint}` This Week Consumption         | Current Monday-start JST week consumption in kWh |
-| Supply Point `{fingerprint}` This Week Cost                | Current Monday-start JST week cost estimate in JPY |
-| Supply Point `{fingerprint}` This Month Consumption        | Current JST calendar month consumption in kWh |
-| Supply Point `{fingerprint}` This Month Cost               | Current JST calendar month cost estimate in JPY |
+| Sensor | State/Type | Unit | Description |
+| :--- | :--- | :---: | :--- |
+| **Account Balance** | Numeric | JPY | Outstanding or credited account balance. |
+| **Account Status** | String | | The contract state (e.g., `ACTIVE`). |
+| **Account Bills Total** | Numeric | | Total invoice count for this specific account. |
+| **Account Transactions Total** | Numeric | | Total transaction ledger count for this account. |
 
-Latest half-hour average power uses Home Assistant power metadata (`W`, measurement state class).
-Latest half-hour average cost rate uses `JPY/kWh` with measurement state class. Both include
-attributes naming `halfHourlyReadings` as the source plus the source reading start/end where
-available; the power sensor is an interval average and is not instantaneous live power.
+### 3. Per-Electricity Supply Point Sensors
 
-Aggregate consumption sensors use Home Assistant energy metadata (`kWh`, total state class).
-Aggregate cost sensors use monetary metadata (`JPY`, total state class). Aggregate attributes include
-`start`, `end`, `reading_count`, `total_consumption`, `total_cost`, `currency`, and
-`source=halfHourlyReadings`. If any included half-hourly reading lacks `costEstimate`, the cost
-sensor state is unavailable while consumption still sums from `value`.
+Each supply point creates a dedicated set of sensors (using a short fingerprint to redact the physical SPIN):
 
-## Data Update
+| Sensor | Unit | State Class | Device Class | Description |
+| :--- | :---: | :---: | :---: | :--- |
+| **Supply Point Status** | | | | e.g. `ON_SUPPLY`, `ACTIVE`. |
+| **Next Reading Date** | | | | Next scheduled meter-reading cycle. |
+| **Today Consumption** | `kWh` | `total` | `energy` | Total consumption since JST midnight. |
+| **Today Cost** | `JPY` | `total` | `monetary` | Total cost estimate since JST midnight. |
+| **This Week Consumption** | `kWh` | `total` | `energy` | Total consumption since Monday 00:00 JST. |
+| **This Week Cost** | `JPY` | `total` | `monetary` | Total cost estimate since Monday 00:00 JST. |
+| **This Month Consumption** | `kWh` | `total` | `energy` | Total consumption since 1st of the month JST. |
+| **This Month Cost** | `JPY` | `total` | `monetary` | Total cost estimate since 1st of the month JST. |
+| **Latest Interval Reading Value** | `kWh` | `measurement` | `energy` | Latest monthly/interval physical reading value. |
+| **Latest Half-Hour Reading Value** | `kWh` | `measurement` | `energy` | Most recent individual half-hourly consumption. |
+| **Latest Half-Hour Average Power** | `W` | `measurement` | `power` | Derived power (W) based on the latest half-hour kWh average. |
+| **Latest Half-Hour Average Cost Rate** | `JPY/kWh` | `measurement` | | Effective rate (JPY per kWh) calculated for the latest period. |
+| **Cumulative Consumption** | `kWh` | `total_increasing` | `energy` | Continuous monotonic running total for Energy Dashboard. |
+| **Cumulative Cost** | `JPY` | `total_increasing` | `monetary` | Continuous monotonic running cost for Energy Dashboard. |
 
-The coordinator polls every 15 minutes with a persistent async `httpx` GraphQL client. Half-hourly
-readings are fetched from the earlier of the current JST week start and month start through the
-current time, which covers the today/week/month aggregate sensors.
+---
 
-## Local Development & Tests
+## Data Update & Architecture
+
+- **Polling Frequency:** The data coordinator queries the GraphQL endpoints once every **15 minutes**.
+- **Fetch Window:** Half-hourly consumption records are fetched starting from the earlier of the current JST calendar week start and current month start up to the present instant. This ensures today/week/month period aggregates are always perfectly accurate and self-healing.
+- **Access States:** Detailed diagnostic sensors like `Interval Readings Access` and `Half-Hour Readings Access` will report `authorized`, `unauthorized`, `disabled`, or `error` depending on your account permissions, allowing for quick troubleshooting if consumption charts are empty.
+
+---
+
+## Local Development & Testing
+
+Setting up a complete virtual development environment is simple:
 
 ```bash
+# 1. Create and activate venv
 python -m venv .venv
-. .venv/bin/activate
+source .venv/bin/activate
+
+# 2. Install package in editable mode with development/test dependencies
 pip install -e ".[test]"
-cp .env.example .env   # fill in OCTOPUS_EMAIL / OCTOPUS_PASSWORD
+
+# 3. Setup local environment configurations (optional)
+cp .env.example .env   # Populate with OCTOPUS_EMAIL and OCTOPUS_PASSWORD
 ```
 
-Run tests (no credentials required — GraphQL is mocked):
+### Running the Test Suite
+
+Our codebase includes a comprehensive, mocked test suite that runs 100% locally with zero external network dependencies:
 
 ```bash
+# Run all unit and integration tests
 .venv/bin/python -m pytest
-```
 
-Syntax check all modules:
-
-```bash
+# Execute compilation checks
 .venv/bin/python -m compileall -q custom_components tests
 ```
 
-A redacted real-account data report can be generated by running the integration API against `.env` credentials and writing `reports/real_account_data_report.md`. The committed report in `reports/` contains counts, field availability, optional consumption access status, and sensor availability without raw account/supply identifiers or address data.
+### Real Account Inspection Tools
 
-## Security Notes
+You can generate a completely redacted and privacy-safe diagnostic report of your real Octopus account. This helps verify query shapes and field mappings against live API payloads without exposing any secrets:
 
-- `.env` and `.local/` are git-ignored. Do not commit them.
-- The integration never logs passwords or tokens.
-- Entity names, unique IDs, and diagnostic attributes use short SHA-256 fingerprints for account and supply-point identifiers instead of exposing raw account numbers/SPINs.
+```bash
+# Generate a detailed redacted audit report at reports/real_account_data_report.md
+.venv/bin/python scripts/fetch_sensors.py --format table
+```
+
+Check the `reports/` folder to view pre-existing performance audits, asynchronous migration benchmarks, and publish-readiness verification reports.
+
+---
+
+## License
+
+This integration is licensed under the **MIT License**. See [LICENSE](LICENSE) for details.

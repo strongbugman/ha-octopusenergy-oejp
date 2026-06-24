@@ -184,7 +184,10 @@ query AccountHalfHourlyReadings(
 }
 """
 
-_AUTH_RE = re.compile(r"(Authorization:\s*(?:Bearer|JWT|Token)\s+)\S+", re.IGNORECASE)
+_AUTH_RE = re.compile(
+    r"(Authorization:\s*(?:Bearer\s+|JWT\s+|Token\s+)?)([A-Za-z0-9\-_=]+\.[A-Za-z0-9\-_=]+\.?[A-Za-z0-9\-_.+/=]*)",
+    re.IGNORECASE,
+)
 
 
 def _scrub(text: str, max_len: int = 240) -> str:
