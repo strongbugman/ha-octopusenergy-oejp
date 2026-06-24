@@ -33,7 +33,21 @@ By authenticating via the secure GraphQL `obtainKrakenToken` mutation, this inte
 
 ## Installation
 
-### Method 1: Manual Installation via ZIP (Recommended for Local Deployments)
+### Method 1: HACS Custom Repository (Highly Recommended)
+
+You can easily install this integration via the Home Assistant Community Store (HACS) as a Custom Repository:
+
+1. Open **HACS** in your Home Assistant instance.
+2. Click the three dots in the top-right corner and select **Custom repositories**.
+3. Add the following repository URL:
+   ```text
+   https://github.com/strongbugman/ha-octopusenergy-oejp-demo
+   ```
+4. Choose **Integration** as the Category and click **Add**.
+5. Once added, you can find and download **Octopus Energy OEJP** from your HACS integrations page.
+6. **Restart Home Assistant** to load the integration.
+
+### Method 2: Manual Installation via ZIP (Recommended for Local Deployments)
 
 1. Build or download the release ZIP.
 2. Extract the archive into your Home Assistant `/config/` directory so that the files are placed at:
@@ -48,7 +62,7 @@ By authenticating via the secure GraphQL `obtainKrakenToken` mutation, this inte
 4. **Restart Home Assistant.**
 5. Navigate to **Settings → Devices & Services → Add Integration** and search for **Octopus Energy OEJP**.
 
-### Method 2: Manual Installation via Copy
+### Method 3: Manual Installation via Copy
 
 Copy the `custom_components/octopusenergy_oejp/` directory directly into your Home Assistant `/config/custom_components/` path. Restart Home Assistant, and then proceed with configuration via the UI.
 
