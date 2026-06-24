@@ -1,8 +1,8 @@
 # Octopus Energy OEJP — Home Assistant Custom Integration
 
 [![hacs_badge](https://img.shields.io/badge/HACS-Custom-41BDF5.svg?style=for-the-badge)](https://github.com/hacs/integration)
-[![License](https://img.shields.io/github/license/strongbugman/ha-octopusenergy-oejp-demo?style=for-the-badge)](LICENSE)
-[![Tests](https://img.shields.io/github/actions/workflow/status/strongbugman/ha-octopusenergy-oejp-demo/tests.yml?branch=master&style=for-the-badge)](https://github.com/strongbugman/ha-octopusenergy-oejp-demo/actions)
+[![License](https://img.shields.io/github/license/strongbugman/ha-octopusenergy-oejp?style=for-the-badge)](LICENSE)
+[![Tests](https://img.shields.io/github/actions/workflow/status/strongbugman/ha-octopusenergy-oejp/tests.yml?branch=master&style=for-the-badge)](https://github.com/strongbugman/ha-octopusenergy-oejp/actions)
 
 A fully featured Home Assistant custom integration for the **Octopus Energy Japan (OEJP)** and region-aligned Kraken API platforms.
 
@@ -14,7 +14,6 @@ By authenticating via the secure GraphQL `obtainKrakenToken` mutation, this inte
 
 ![image](./example1.jpg)
 ![image](./example2.jpg)
-![image](./example3.jpg)
 
 ---
 
@@ -41,7 +40,7 @@ You can easily install this integration via the Home Assistant Community Store (
 2. Click the three dots in the top-right corner and select **Custom repositories**.
 3. Add the following repository URL:
    ```text
-   https://github.com/strongbugman/ha-octopusenergy-oejp-demo
+   https://github.com/strongbugman/ha-octopusenergy-oejp
    ```
 4. Choose **Integration** as the Category and click **Add**.
 5. Once added, you can find and download **Octopus Energy OEJP** from your HACS integrations page.
