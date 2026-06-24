@@ -12,7 +12,11 @@ from scripts.package_integration import DOMAIN, build_package, is_forbidden_path
 def test_package_zip_contains_manifest_and_excludes_forbidden_paths(tmp_path):
     zip_path, archive_names = build_package(dist_dir=tmp_path)
 
-    assert zip_path == tmp_path / f"{DOMAIN}-0.1.0.zip"
+    manifest_file_path = Path("custom_components") / DOMAIN / "manifest.json"
+    with open(manifest_file_path, "r", encoding="utf-8") as f:
+        version = json.load(f)["version"]
+
+    assert zip_path == tmp_path / f"{DOMAIN}-{version}.zip"
     assert archive_names == sorted(archive_names)
 
     with zipfile.ZipFile(zip_path) as archive:

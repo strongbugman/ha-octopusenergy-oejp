@@ -9,6 +9,8 @@ from typing import Any
 
 import httpx
 
+from .const import VERSION
+
 DEFAULT_GRAPHQL_URL = "https://api.oejp-kraken.energy/v1/graphql/"
 
 OBTAIN_TOKEN_MUTATION = """
@@ -261,7 +263,7 @@ class GraphQLClient:
         headers = {
             "Accept": "application/json",
             "Content-Type": "application/json",
-            "User-Agent": "ha-octopusenergy-oejp/0.1.0",
+            "User-Agent": f"ha-octopusenergy-oejp/{VERSION}",
         }
         if token:
             headers["Authorization"] = token
