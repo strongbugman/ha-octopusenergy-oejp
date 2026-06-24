@@ -2,7 +2,7 @@
 
 [![hacs_badge](https://img.shields.io/badge/HACS-Custom-41BDF5.svg?style=for-the-badge)](https://github.com/hacs/integration)
 [![License](https://img.shields.io/github/license/strongbugman/ha-octopusenergy-oejp?style=for-the-badge)](LICENSE)
-[![Tests](https://img.shields.io/github/actions/workflow/status/strongbugman/ha-octopusenergy-oejp/tests.yml?branch=master&style=for-the-badge)](https://github.com/strongbugman/ha-octopusenergy-oejp/actions)
+[![Tests](https://img.shields.io/github/actions/workflow/status/strongbugman/ha-octopusenergy-oejp/tests.yml?branch=main&style=for-the-badge)](https://github.com/strongbugman/ha-octopusenergy-oejp/actions)
 
 A fully featured Home Assistant custom integration for the **Octopus Energy Japan (OEJP)** and region-aligned Kraken API platforms.
 
