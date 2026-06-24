@@ -1,9 +1,9 @@
 # Octopus Energy OEJP — Home Assistant Custom Integration
 
 [![HACS Custom](https://img.shields.io/badge/HACS-Custom-41BDF5.svg?style=for-the-badge)](https://github.com/hacs/integration)
-[![HACS Validation](https://img.shields.io/github/actions/workflow/status/strongbugman/ha-octopusenergy-oejp-demo/hacs-validation.yml?branch=main&label=HACS%20Validation&style=for-the-badge)](https://github.com/strongbugman/ha-octopusenergy-oejp-demo/actions/workflows/hacs-validation.yml)
-[![Tests & Release](https://img.shields.io/github/actions/workflow/status/strongbugman/ha-octopusenergy-oejp-demo/test-and-release.yml?branch=main&label=Tests%20%26%20Release&style=for-the-badge)](https://github.com/strongbugman/ha-octopusenergy-oejp-demo/actions/workflows/test-and-release.yml)
-[![License](https://img.shields.io/github/license/strongbugman/ha-octopusenergy-oejp-demo?style=for-the-badge)](LICENSE)
+[![HACS Validation](https://img.shields.io/github/actions/workflow/status/strongbugman/ha-octopusenergy-oejp/hacs-validation.yml?branch=main&label=HACS%20Validation&style=for-the-badge)](https://github.com/strongbugman/ha-octopusenergy-oejp/actions/workflows/hacs-validation.yml)
+[![Tests & Release](https://img.shields.io/github/actions/workflow/status/strongbugman/ha-octopusenergy-oejp/test-and-release.yml?branch=main&label=Tests%20%26%20Release&style=for-the-badge)](https://github.com/strongbugman/ha-octopusenergy-oejp/actions/workflows/test-and-release.yml)
+[![License](https://img.shields.io/github/license/strongbugman/ha-octopusenergy-oejp?style=for-the-badge)](LICENSE)
 
 A fully featured Home Assistant custom integration for the **Octopus Energy Japan (OEJP)** and region-aligned Kraken API platforms.
 
