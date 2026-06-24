@@ -3,8 +3,6 @@ name: Test and Release
 on:
   push:
     branches: [ master, main ]
-    tags:
-      - 'v*'
   pull_request:
     branches: [ master, main ]
 
@@ -44,27 +42,55 @@ jobs:
           python -m compileall -q custom_components tests
 
   release:
-    name: Release Asset
+    name: Auto-Tag and Release
     needs: test
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
     runs-on: ubuntu-latest
 
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
+      - name: Check version and Auto-Tag
+        id: auto_tag
+        run: |
+          VERSION=$(python -c "import json; print(json.load(open('custom_components/octopusenergy_oejp/manifest.json'))['version'])")
+          TAG="v$VERSION"
+          echo "Detected version: $VERSION"
+          
+          # Check if tag exists locally or in remote
+          git fetch --tags
+          if git rev-parse "$TAG" >/dev/null 2>&1; then
+            echo "Tag $TAG already exists. Skipping release."
+            echo "should_release=false" >> $GITHUB_OUTPUT
+          else
+            echo "Tag $TAG does not exist. Proceeding with auto-tag and release."
+            git config --global user.name "github-actions[bot]"
+            git config --global user.email "github-actions[bot]@users.noreply.github.com"
+            git tag "$TAG"
+            git push origin "$TAG"
+            echo "should_release=true" >> $GITHUB_OUTPUT
+            echo "tag=$TAG" >> $GITHUB_OUTPUT
+          fi
+
       - name: Package integration ZIP
+        if: steps.auto_tag.outputs.should_release == 'true'
         run: |
           python scripts/package_integration.py
 
       - name: Create Release
+        if: steps.auto_tag.outputs.should_release == 'true'
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ steps.auto_tag.outputs.tag }}
+          name: Release ${{ steps.auto_tag.outputs.tag }}
           files: |
             dist/octopusenergy_oejp-*.zip
           draft: false
