@@ -106,6 +106,7 @@ async def _write_supply_point_statistics(
     domain: str,
     async_add_external_statistics: object,
     StatisticData: type,
+    StatisticMeanType: type,
     StatisticMetaData: type,
     get_last_statistics: object,
 ) -> None:
@@ -126,8 +127,9 @@ async def _write_supply_point_statistics(
         statistic_id=energy_stat_id,
         source=domain,
         name=f"Supply Point {fp} Electricity Consumption",
+        unit_class="energy",
         unit_of_measurement="kWh",
-        has_mean=False,
+        mean_type=StatisticMeanType.NONE,
         has_sum=True,
     )
 
@@ -162,8 +164,9 @@ async def _write_supply_point_statistics(
             statistic_id=cost_stat_id,
             source=domain,
             name=f"Supply Point {fp} Electricity Cost",
+            unit_class=None,
             unit_of_measurement="JPY",
-            has_mean=False,
+            mean_type=StatisticMeanType.NONE,
             has_sum=True,
         )
 
@@ -207,6 +210,7 @@ async def async_insert_statistics(
             async_add_external_statistics,
             get_last_statistics,
             StatisticData,
+            StatisticMeanType,
             StatisticMetaData,
         )
     except ImportError:
@@ -227,6 +231,7 @@ async def async_insert_statistics(
             DOMAIN,
             async_add_external_statistics,
             StatisticData,
+            StatisticMeanType,
             StatisticMetaData,
             get_last_statistics,
         )

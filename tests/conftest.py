@@ -75,6 +75,9 @@ def _install_ha_stubs() -> None:
             self.sum = sum
             self.mean = mean
 
+    class StatisticMeanType:
+        NONE = 0
+
     class StatisticMetaData:
         def __init__(
             self,
@@ -82,15 +85,17 @@ def _install_ha_stubs() -> None:
             statistic_id,
             source,
             name,
+            unit_class,
             unit_of_measurement,
-            has_mean,
+            mean_type,
             has_sum,
         ):
             self.statistic_id = statistic_id
             self.source = source
             self.name = name
+            self.unit_class = unit_class
             self.unit_of_measurement = unit_of_measurement
-            self.has_mean = has_mean
+            self.mean_type = mean_type
             self.has_sum = has_sum
 
     def async_add_external_statistics(hass, metadata, statistics):
@@ -125,6 +130,7 @@ def _install_ha_stubs() -> None:
         "homeassistant.components.recorder.statistics": {
             "async_add_external_statistics": async_add_external_statistics,
             "StatisticData": StatisticData,
+            "StatisticMeanType": StatisticMeanType,
             "StatisticMetaData": StatisticMetaData,
         },
         "homeassistant.data_entry_flow": {"FlowResult": FlowResult},
