@@ -163,6 +163,7 @@ def test_async_insert_statistics_calls_add_external_statistics():
 
     from homeassistant.components.recorder.statistics import (
         StatisticData,
+        StatisticMeanType,
         StatisticMetaData,
     )
 
@@ -187,6 +188,7 @@ def test_async_insert_statistics_calls_add_external_statistics():
                         "async_add_external_statistics": staticmethod(_mock_add),
                         "get_last_statistics": staticmethod(lambda *args, **kwargs: {}),
                         "StatisticData": StatisticData,
+                        "StatisticMeanType": StatisticMeanType,
                         "StatisticMetaData": StatisticMetaData,
                     },
                 )()
@@ -197,6 +199,8 @@ def test_async_insert_statistics_calls_add_external_statistics():
     assert len(calls) == 2  # energy + cost
     _hass, energy_meta, energy_stats = calls[0]
     assert energy_meta.unit_of_measurement == "kWh"
+    assert energy_meta.unit_class == "energy"
+    assert energy_meta.mean_type == StatisticMeanType.NONE
     assert energy_meta.has_sum is True
     assert len(energy_stats) == 1
     assert energy_stats[0].sum == pytest.approx(0.7)
@@ -204,6 +208,7 @@ def test_async_insert_statistics_calls_add_external_statistics():
 
     _hass, cost_meta, cost_stats = calls[1]
     assert cost_meta.unit_of_measurement == "JPY"
+    assert cost_meta.unit_class is None
     assert cost_stats[0].sum == pytest.approx(21.0)
 
 
@@ -214,7 +219,11 @@ def test_async_insert_statistics_skips_point_with_no_readings():
 
     calls: list[Any] = []
 
-    from homeassistant.components.recorder.statistics import StatisticData, StatisticMetaData
+    from homeassistant.components.recorder.statistics import (
+        StatisticData,
+        StatisticMeanType,
+        StatisticMetaData,
+    )
 
     def _mock_add(hass, metadata, statistics):
         calls.append(metadata)
@@ -230,6 +239,7 @@ def test_async_insert_statistics_skips_point_with_no_readings():
                     "async_add_external_statistics": staticmethod(_mock_add),
                     "get_last_statistics": staticmethod(lambda *args, **kwargs: {}),
                     "StatisticData": StatisticData,
+                    "StatisticMeanType": StatisticMeanType,
                     "StatisticMetaData": StatisticMetaData,
                 },
             )()
